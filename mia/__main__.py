@@ -29,7 +29,14 @@ def main():
 	if getattr(args, "config", None):
 		cfg = load_attack_config_from_yaml(args.config)
 		res = run_attack(cfg)
-		print(f"{cfg.dataset}, model={cfg.model_name}, ref={cfg.ref_variant}, AUC={res['auc']:.6f}, TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}")
+		#print(f"{cfg.dataset}, model={cfg.model_name}, ref={cfg.ref_variant}, AUC={res['auc']:.6f}, TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}")
+		print(
+    f"{cfg.dataset}, model={cfg.model_name}, ref={cfg.ref_variant}, "
+    f"EZ-MIA AUC={res['auc']:.6f}, "
+    f"EZ-MIA TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}, "
+    f"Min-K% AUC={res['min_k_auc']:.6f}, "
+    f"Min-K% TPR@0.1%FPR={res['min_k_tpr_at_fpr_0.001']:.3f}"
+)
 		append_result_csv(res)
 		return
 

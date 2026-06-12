@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from sklearn.metrics import roc_auc_score
 
 from .datasets import sample_splits, sample_validation_texts, sample_prefix_texts, sample_domain_splits
-from .models import build_tokenizer, build_model, prepare_lm_dataloader, finetune_target, compute_ez_scores, build_distillation_reference, build_sft_reference
+from .models import build_tokenizer, build_model, prepare_lm_dataloader, finetune_target, compute_ez_scores, compute_min_k_scores, build_distillation_reference, build_sft_reference
 from .metrics import tpr_at_fpr
 from .config import AttackConfig
 
@@ -209,6 +209,27 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	scores_m = compute_ez_scores(tokenizer, target_model, ref_model, [x.text for x in target_member_examples], device, sequence_length=cfg.sequence_length, batch_size=cfg.batch_size)
 	scores_nm = compute_ez_scores(tokenizer, target_model, ref_model, [x.text for x in target_nonmember_examples], device, sequence_length=cfg.sequence_length, batch_size=cfg.batch_size)
 	
+	tqdm.write("[eval] Computing Min-K% scores from target_model on target data...")
+
+	min_k_scores_m = compute_min_k_scores(
+    tokenizer,
+    target_model,
+    [x.text for x in target_member_examples],
+    device,
+    sequence_length=cfg.sequence_length,
+    batch_size=cfg.batch_size,
+)
+
+	min_k_scores_nm = compute_min_k_scores(
+    tokenizer,
+    target_model,
+    [x.text for x in target_nonmember_examples],
+    device,
+    sequence_length=cfg.sequence_length,
+    batch_size=cfg.batch_size,
+)
+	
+
 	y_eval = np.array([1]*len(scores_m) + [0]*len(scores_nm), dtype=np.int64)
 	scores = np.array(scores_m + scores_nm, dtype=np.float32)
 	scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
@@ -216,6 +237,19 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	auc = float(roc_auc_score(y_eval, scores))
 	tpr001 = tpr_at_fpr(y_eval, scores, 0.01)
 	tpr0001 = tpr_at_fpr(y_eval, scores, 0.001)
+
+	min_k_scores = np.array(min_k_scores_m + min_k_scores_nm, dtype=np.float32)
+	min_k_scores = np.nan_to_num(min_k_scores, nan=0.0, posinf=0.0, neginf=0.0)
+
+	min_k_auc = float(roc_auc_score(y_eval, min_k_scores))
+	min_k_tpr001 = tpr_at_fpr(y_eval, min_k_scores, 0.01)
+	min_k_tpr0001 = tpr_at_fpr(y_eval, min_k_scores, 0.001)
+
+	tqdm.write(
+    f"[eval] Min-K% AUC={min_k_auc:.6f}, "
+    f"TPR@1%FPR={min_k_tpr001:.3f}, "
+    f"TPR@0.1%FPR={min_k_tpr0001:.3f}"
+)
 
 	if cfg.save_artifacts_path:
 		save_artifacts(
@@ -240,4 +274,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		"eval_total": cfg.eval_total,
 		"epochs": cfg.epochs,
 		"save_artifacts_path": cfg.save_artifacts_path,
+		"min_k_auc": min_k_auc,
+		"min_k_tpr_at_fpr_0.01": float(min_k_tpr001),
+		"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001),
 	}

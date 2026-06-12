@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+ezmia-env/
+
+# Results
+results.csv
+mia/results.csv
+
+# macOS
+.DS_Store
+
+
+

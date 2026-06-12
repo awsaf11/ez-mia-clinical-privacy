@@ -14,6 +14,7 @@ from peft import LoraConfig, get_peft_model
 from tqdm.auto import tqdm
 
 from .ez_score import error_zone_pos_neg_sum_ratio
+from .min_k_score import min_k_percent_score
 
 
 def _progress(sequence, **kwargs):
@@ -359,6 +360,42 @@ def compute_ez_scores(
 		scores.append(float(ez))
 		
 	return scores
+
+def compute_min_k_scores(
+    tokenizer,
+    target_model,
+    texts: List[str],
+    device: torch.device,
+    sequence_length: int = 128,
+    batch_size: int = 32,
+    k_percent: float = 20.0,
+) -> List[float]:
+    """Compute Min-K% Prob score per example using the target model."""
+    t_stats_list = _extract_stats_for_model(
+        target_model,
+        tokenizer,
+        texts,
+        device,
+        sequence_length,
+        batch_size,
+    )
+
+    target_model.to("cpu")
+    torch.cuda.empty_cache()
+
+    scores: List[float] = []
+
+    for t_s in t_stats_list:
+        score = min_k_percent_score(
+            t_s["correct"],
+            t_s["mask"],
+            k_percent=k_percent,
+            ignore_bos=True,
+            min_tokens=2,
+        )
+        scores.append(float(score))
+
+    return scores
 
 
 def build_distillation_reference(
