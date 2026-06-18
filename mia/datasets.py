@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -52,8 +53,39 @@ _PREFIX_SOURCES = {
 		"text_fields": ["code"],
 		"streaming": True,
 	},
+	"mtsamples": {
+		"type": "local_csv",
+		"text_fields": ["transcription"],
+	},
 }
 
+def _load_mtsamples_raw_texts() -> List[str]:
+	data_path = Path("data/mtsamples.csv")
+	if not data_path.exists():
+		raise FileNotFoundError(
+			"Expected MTSamples CSV at data/mtsamples.csv. "
+			"Create a data/ folder and place mtsamples.csv there."
+		)
+
+	import pandas as pd
+
+	df = pd.read_csv(data_path)
+
+	if "transcription" not in df.columns:
+		raise ValueError(
+			f"Expected a 'transcription' column in MTSamples CSV. Found columns: {list(df.columns)}"
+		)
+
+	texts = (
+		df["transcription"]
+		.dropna()
+		.astype(str)
+		.map(lambda x: x.strip())
+		.tolist()
+	)
+
+	texts = [t for t in texts if len(t.split()) >= 30]
+	return texts
 
 STREAM_SEQUENCE_BUFFER_TARGET = 200_000
 
@@ -218,6 +250,42 @@ def sample_splits(
 	elif dataset.lower() == "xsum":
 		ds = load_dataset("xsum")
 		train_ds = ds["train"]
+	elif dataset.lower() == "mtsamples":
+		raw_texts = _load_mtsamples_raw_texts()
+		buffer_sequences = _texts_to_sequences_concat(raw_texts, sequence_length=sequence_length)
+
+		tm = train_total // 2
+		em = eval_total // 2
+		tn = train_total // 2
+		en = eval_total // 2
+
+		member_needed = tm + em
+		nonmember_needed = tn + en
+		total_needed = member_needed + nonmember_needed
+
+		if len(buffer_sequences) < total_needed:
+			raise ValueError(
+				f"Requested {total_needed} sequences of length {sequence_length}, "
+				f"but only produced {len(buffer_sequences)} from MTSamples."
+			)
+
+		rng_stream = np.random.RandomState(seed + 17)
+		rng_stream.shuffle(buffer_sequences)
+
+		member_texts = buffer_sequences[:member_needed]
+		nonmember_texts = buffer_sequences[member_needed:member_needed + nonmember_needed]
+		remaining_sequences = buffer_sequences[member_needed + nonmember_needed:]
+
+		members = [Example(id=f"member_{i}", text=t, label=0) for i, t in enumerate(member_texts)]
+		nonmembers = [Example(id=f"nonmember_{i}", text=t, label=0) for i, t in enumerate(nonmember_texts)]
+
+		training_member = members[:tm]
+		eval_member = members[tm: tm + em]
+		training_nonmember = nonmembers[:tn]
+		eval_nonmember = nonmembers[tn: tn + en]
+
+		seq_out = iter(remaining_sequences)
+		return (training_member, training_nonmember, eval_member, eval_nonmember, seq_out) if return_sequence_iter else (training_member, training_nonmember, eval_member, eval_nonmember)
 	elif dataset.lower() == "wikitext":
 		text_selector = lambda ex: ex.get("text", "")
 		train_text_iter = _streaming_text_iterator("wikitext", text_selector=text_selector, seed_val=seed, ds_config="wikitext-103-raw-v1")
@@ -365,6 +433,32 @@ def sample_domain_splits(
 	- domain_val_texts: val_total sequences used for validation of domain-sourced models
 	"""
 	ds_name = target_dataset.lower()
+	if ds_name == "mtsamples":
+		raw_texts = _load_mtsamples_raw_texts()
+		sequences = _texts_to_sequences_concat(raw_texts, sequence_length=sequence_length)
+
+		member_needed = train_total // 2
+		nonmember_needed = train_total // 2
+		val_needed = max(0, int(val_total))
+		total_needed = member_needed + nonmember_needed + val_needed
+
+		if len(sequences) < total_needed:
+			raise ValueError(
+				f"Requested {total_needed} domain sequences but only produced {len(sequences)} from MTSamples."
+			)
+
+		rng_shuffle = np.random.RandomState(seed + 8888)
+		rng_shuffle.shuffle(sequences)
+
+		member_texts = sequences[:member_needed]
+		nonmember_texts = sequences[member_needed:member_needed + nonmember_needed]
+		val_texts = sequences[member_needed + nonmember_needed:member_needed + nonmember_needed + val_needed]
+
+		domain_members = [Example(id=f"domain_member_{i}", text=t, label=1) for i, t in enumerate(member_texts)]
+		domain_nonmembers = [Example(id=f"domain_nonmember_{i}", text=t, label=0) for i, t in enumerate(nonmember_texts)]
+
+		return domain_members, domain_nonmembers, val_texts
+	
 	if ds_name not in _PREFIX_SOURCES:
 		raise ValueError(f"No domain source configured for target dataset='{target_dataset}'.")
 	cfg = _PREFIX_SOURCES[ds_name]
@@ -625,6 +719,16 @@ def sample_validation_texts(
 		return out
 
 	ls = dataset.lower()
+	if ls == "mtsamples":
+		raw_texts = _load_mtsamples_raw_texts()
+		buffer = _texts_to_sequences_concat(raw_texts, sequence_length=sequence_length)
+		rng_stream = np.random.RandomState(seed + 1999)
+		rng_stream.shuffle(buffer)
+		if len(buffer) < N:
+			raise ValueError(
+				f"Requested {N} validation sequences but only produced {len(buffer)} from MTSamples."
+			)
+		return buffer[:N]
 	if ls == "wikitext":
 		text_selector = lambda ex: ex.get("text", "")
 		text_iter = _streaming_text_iterator("wikitext", text_selector=text_selector, seed_val=seed + 999, ds_config="wikitext-103-raw-v1")
