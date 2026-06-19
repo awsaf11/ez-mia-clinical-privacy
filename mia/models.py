@@ -53,7 +53,6 @@ def _fallback_target_modules(model_name: str) -> List[str]:
 
 
 def _patch_torch_load_safety() -> bool:
-	"""Bypass transformers torch.load safety check for environments without torch>=2.6."""
 	try:
 		from transformers import utils as hf_utils
 	except Exception:
@@ -63,15 +62,16 @@ def _patch_torch_load_safety() -> bool:
 		return False
 	if getattr(hf_utils, "_mia_patched_check_torch_load_is_safe", False):
 		return True
+
 	def _noop_check_torch_load_is_safe():
 		return None
+
 	hf_utils.check_torch_load_is_safe = _noop_check_torch_load_is_safe
 	hf_utils._mia_patched_check_torch_load_is_safe = True
 	return True
 
 
 def _load_auto_model(model_name: str, dtype=None, **kwargs):
-	"""Load model preferring safetensors; when unavailable, bypass the torch>=2.6 gate with a warning."""
 	load_kwargs = {"low_cpu_mem_usage": True}
 	if dtype is not None:
 		load_kwargs["torch_dtype"] = dtype
@@ -80,79 +80,83 @@ def _load_auto_model(model_name: str, dtype=None, **kwargs):
 		return AutoModelForCausalLM.from_pretrained(model_name, use_safetensors=True, **load_kwargs)
 	except Exception as e:
 		msg = str(e).lower()
+
 		def _load_bin_with_patch():
 			patched = _patch_torch_load_safety()
 			if patched:
-				tqdm.write("[load] torch<2.6 detected; bypassing torch.load safety check to load weights. "
-				           "Upgrade torch or prefer safetensors for hardened loading.")
+				tqdm.write("[load] torch<2.6 detected; bypassing torch.load safety check to load weights.")
 			else:
 				raise RuntimeError(
 					"Unable to bypass torch>=2.6 requirement. Please upgrade torch to >=2.6 or use safetensors checkpoints."
 				) from e
 			return AutoModelForCausalLM.from_pretrained(model_name, use_safetensors=False, **load_kwargs)
+
 		if "safetensor" in msg or "safetensors" in msg or "torch to at least v2.6" in msg or "torch>=2.6" in msg:
 			return _load_bin_with_patch()
 		raise
 
 
 def _maybe_apply_lora(model, target_modules: list[str], r: int, alpha: int, dropout: float):
-    """Apply LoRA with explicitly specified target modules. Raises on failure."""
-    if not target_modules:
-        raise ValueError("lora_target_modules must be specified when using LoRA")
-    lcfg = LoraConfig(
-        r=r,
-        lora_alpha=alpha,
-        lora_dropout=dropout,
-        target_modules=target_modules,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    return get_peft_model(model, lcfg)
+	if not target_modules:
+		raise ValueError("lora_target_modules must be specified when using LoRA")
+	lcfg = LoraConfig(
+		r=r,
+		lora_alpha=alpha,
+		lora_dropout=dropout,
+		target_modules=target_modules,
+		bias="none",
+		task_type="CAUSAL_LM",
+	)
+	return get_peft_model(model, lcfg)
 
 
 def build_model(
-    model_name: str,
-    tokenizer,
-    device: torch.device,
-    *,
-    use_lora: bool = False,
-    lora_r: int = 8,
-    lora_alpha: int = 16,
-    lora_dropout: float = 0.05,
-    lora_target_modules: list[str] | None = None,
+	model_name: str,
+	tokenizer,
+	device: torch.device,
+	*,
+	use_lora: bool = False,
+	lora_r: int = 8,
+	lora_alpha: int = 16,
+	lora_dropout: float = 0.05,
+	lora_target_modules: list[str] | None = None,
 ) -> AutoModelForCausalLM:
-    model = _load_auto_model(model_name)
-    if tokenizer.pad_token is not None and getattr(model.config, "pad_token_id", None) is None:
-        model.resize_token_embeddings(len(tokenizer))
-        model.config.pad_token_id = tokenizer.pad_token_id
+	model = _load_auto_model(model_name)
+	if tokenizer.pad_token is not None and getattr(model.config, "pad_token_id", None) is None:
+		model.resize_token_embeddings(len(tokenizer))
+		model.config.pad_token_id = tokenizer.pad_token_id
 
-    if hasattr(model, "gradient_checkpointing_disable"):
-        try:
-            model.gradient_checkpointing_disable()
-        except Exception:
-            pass
+	if hasattr(model, "gradient_checkpointing_disable"):
+		try:
+			model.gradient_checkpointing_disable()
+		except Exception:
+			pass
 
-    if use_lora:
-        model = _maybe_apply_lora(model, lora_target_modules, lora_r, lora_alpha, lora_dropout)
-    model.to(device)
-    return model
+	if use_lora:
+		model = _maybe_apply_lora(model, lora_target_modules, lora_r, lora_alpha, lora_dropout)
+
+	model.to(device)
+	return model
 
 
 def prepare_lm_dataloader(tokenizer, texts: List[str], batch_size: int, device: torch.device, *, sequence_length: int):
 	class _TextDataset(Dataset):
 		def __init__(self, texts_list):
 			self.texts = texts_list
+
 		def __len__(self):
 			return len(self.texts)
+
 		def __getitem__(self, idx):
 			return self.texts[idx]
+
 	def _collate_text(batch: List[str]):
 		encodings = tokenizer(batch, padding="max_length", truncation=True, max_length=sequence_length, return_tensors="pt")
 		input_ids = encodings["input_ids"]
 		attention_mask = encodings["attention_mask"]
 		labels = input_ids.clone()
 		return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
-		
+
 	dataset = _TextDataset(texts)
 	pin_memory = device.type == "cuda"
 	return DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=_collate_text, pin_memory=pin_memory)
@@ -168,9 +172,9 @@ def finetune_target(
 	val_dataloader: DataLoader | None = None,
 	load_best_on_val: bool = True,
 ) -> float:
-	"""Fine-tune for a fixed number of epochs, optionally selecting the best validation checkpoint."""
 	if load_best_on_val and val_dataloader is None:
 		raise ValueError("Validation dataloader is required when load_best_on_val=True.")
+
 	device = model.device
 	model.train()
 
@@ -185,6 +189,7 @@ def finetune_target(
 	best_val_loss: float | None = None
 	best_state_dir: Path | None = None
 	best_state_path: Path | None = None
+
 	if load_best_on_val and val_dataloader is not None:
 		best_state_dir = Path(tempfile.mkdtemp(prefix="finetune_best_"))
 		best_state_path = best_state_dir / "best.pt"
@@ -194,18 +199,21 @@ def finetune_target(
 			total = 0.0
 			n = 0
 			epoch_bar = _progress(train_dataloader, desc=f"Train epoch {epoch_idx+1}/{epochs}", unit="batch")
+
 			for batch in epoch_bar:
 				batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
 				outputs = model(**batch)
 				loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
+
 				optimizer.zero_grad(set_to_none=True)
 				loss.backward()
 				optimizer.step()
 				scheduler.step()
+
 				total += float(loss.detach().cpu().item())
 				n += 1
-				running = total / max(n, 1)
-				epoch_bar.set_postfix(loss=f"{running:.4f}")
+				epoch_bar.set_postfix(loss=f"{(total / max(n, 1)):.4f}")
+
 			epoch_bar.close()
 			last_train_loss = total / max(n, 1)
 
@@ -216,6 +224,7 @@ def finetune_target(
 					vtotal = 0.0
 					vn = 0
 					val_bar = _progress(val_dataloader, desc=f"Val epoch {epoch_idx+1}/{epochs}", unit="batch")
+
 					for vbatch in val_bar:
 						vbatch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in vbatch.items()}
 						vout = model(**vbatch)
@@ -223,22 +232,24 @@ def finetune_target(
 						vtotal += float(vloss.detach().cpu().item())
 						vn += 1
 						val_bar.set_postfix(loss=f"{(vtotal / max(vn, 1)):.4f}")
+
 					val_bar.close()
 					val_avg = vtotal / max(vn, 1)
+
 				model.train()
-				if load_best_on_val and best_state_path is not None:
-					if best_val_loss is None or val_avg < best_val_loss:
-						best_val_loss = val_avg
+
+				if best_val_loss is None or val_avg < best_val_loss:
+					best_val_loss = val_avg
+					if load_best_on_val and best_state_path is not None:
 						torch.save(model.state_dict(), best_state_path)
-				else:
-					if best_val_loss is None or val_avg < best_val_loss:
-						best_val_loss = val_avg
+
 			if val_avg is None:
 				tqdm.write(f"[train] epoch {epoch_idx+1}/{epochs} - loss: {last_train_loss:.6f}")
 			else:
 				tqdm.write(f"[train] epoch {epoch_idx+1}/{epochs} - loss: {last_train_loss:.6f} - val_loss: {val_avg:.6f}")
 
 		selected_loss = best_val_loss if best_val_loss is not None else last_train_loss
+
 		if load_best_on_val:
 			if best_state_path is None or best_val_loss is None:
 				raise RuntimeError("Validation loss was not computed; cannot load best checkpoint.")
@@ -246,7 +257,9 @@ def finetune_target(
 			model.load_state_dict(state)
 			selected_loss = best_val_loss
 			tqdm.write(f"[train] loaded best validation checkpoint (val_loss={best_val_loss:.6f})")
+
 		return float(selected_loss)
+
 	finally:
 		if best_state_dir is not None:
 			shutil.rmtree(best_state_dir, ignore_errors=True)
@@ -269,7 +282,6 @@ def build_sft_reference(
 	lora_dropout: float = 0.05,
 	lora_target_modules: list[str] | None = None,
 ):
-	"""Build an SFT reference model by fine-tuning on provided texts."""
 	ref_model = build_model(
 		base_model_name,
 		tokenizer,
@@ -280,6 +292,7 @@ def build_sft_reference(
 		lora_dropout=lora_dropout,
 		lora_target_modules=lora_target_modules,
 	)
+
 	if val_texts and len(val_texts) > 0:
 		train_dataloader = prepare_lm_dataloader(tokenizer, texts, batch_size=batch_size, device=device, sequence_length=sequence_length)
 		validation_dataloader = prepare_lm_dataloader(tokenizer, val_texts, batch_size=batch_size, device=device, sequence_length=sequence_length)
@@ -287,116 +300,159 @@ def build_sft_reference(
 	else:
 		dataloader = prepare_lm_dataloader(tokenizer, texts, batch_size=batch_size, device=device, sequence_length=sequence_length)
 		_ = finetune_target(ref_model, dataloader, epochs=epochs, lr=lr)
+
 	return ref_model
 
 
-def _extract_stats_for_model(model, tokenizer, texts: List[str], device: torch.device, sequence_length: int, batch_size: int) -> List[Dict[str, Any]]:
-	"""Run inference on a single model and collect token statistics needed for metrics."""
+def _extract_stats_for_model(
+	model,
+	tokenizer,
+	texts: List[str],
+	device: torch.device,
+	sequence_length: int,
+	batch_size: int,
+	defense: str = "none",
+	noise_std: float = 0.0,
+) -> List[Dict[str, Any]]:
 	model.eval()
+
 	if hasattr(model.config, "use_cache"):
 		model.config.use_cache = True
-	
+
 	model.to(device)
-	
+
 	stats_out = []
 	with torch.no_grad():
 		for i in range(0, len(texts), batch_size):
-			batch_texts = texts[i:i+batch_size]
-			encodings = tokenizer(batch_texts, padding="max_length", truncation=True, max_length=sequence_length, return_tensors="pt")
+			batch_texts = texts[i:i + batch_size]
+			encodings = tokenizer(
+				batch_texts,
+				padding="max_length",
+				truncation=True,
+				max_length=sequence_length,
+				return_tensors="pt",
+			)
 			input_ids = encodings["input_ids"].to(device)
 			attention_mask = encodings["attention_mask"].to(device)
-			
+
 			outputs = model(input_ids=input_ids, attention_mask=attention_mask)
 			logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
-			
+
+			if defense == "output_perturbation" and noise_std > 0:
+				#print(f"Applying output perturbation: sigma={noise_std}")
+				logits = logits + torch.randn_like(logits) * noise_std
+
 			pred_logits = logits[:, :-1, :]
 			target_ids = input_ids[:, 1:]
 			mask = attention_mask[:, 1:]
-			
+
 			lp = F.log_softmax(pred_logits, dim=-1)
 			correct = lp.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
-			
+
 			_, top1_idx = torch.topk(lp, k=1, dim=-1)
 			top1_idx = top1_idx.squeeze(-1)
-			
+
 			batch_count = input_ids.shape[0]
 			for b in range(batch_count):
 				stats_out.append({
 					"correct": correct[b].cpu(),
 					"top1_idx": top1_idx[b].cpu(),
 					"target_ids": target_ids[b].cpu(),
-					"mask": mask[b].cpu()
+					"mask": mask[b].cpu(),
 				})
+
 	return stats_out
 
 
 def compute_ez_scores(
-	tokenizer, 
-	target_model, 
-	reference_model, 
-	texts: List[str], 
-	device: torch.device, 
+	tokenizer,
+	target_model,
+	reference_model,
+	texts: List[str],
+	device: torch.device,
 	sequence_length: int = 128,
-	batch_size: int = 32
+	batch_size: int = 32,
+	defense: str = "none",
+	noise_std: float = 0.0,
 ) -> List[float]:
-	"""Compute the EZ ratio score per example sequentially to save memory."""
-	t_stats_list = _extract_stats_for_model(target_model, tokenizer, texts, device, sequence_length, batch_size)
-	
+	t_stats_list = _extract_stats_for_model(
+		target_model,
+		tokenizer,
+		texts,
+		device,
+		sequence_length,
+		batch_size,
+		defense=defense,
+		noise_std=noise_std,
+	)
+
 	target_model.to("cpu")
 	torch.cuda.empty_cache()
-	
-	r_stats_list = _extract_stats_for_model(reference_model, tokenizer, texts, device, sequence_length, batch_size)
-	
+
+	r_stats_list = _extract_stats_for_model(
+		reference_model,
+		tokenizer,
+		texts,
+		device,
+		sequence_length,
+		batch_size,
+	)
+
 	scores: List[float] = []
-	
+
 	for t_s, r_s in zip(t_stats_list, r_stats_list):
-		t_correct = t_s["correct"]
-		r_correct = r_s["correct"]
-		mask_b = t_s["mask"]
-		t_top1_idx = t_s["top1_idx"]
-		target_ids_b = t_s["target_ids"]
-		
-		ez = error_zone_pos_neg_sum_ratio(t_correct, r_correct, t_top1_idx, target_ids_b, mask_b, ignore_bos=True, min_tokens=2)
+		ez = error_zone_pos_neg_sum_ratio(
+			t_s["correct"],
+			r_s["correct"],
+			t_s["top1_idx"],
+			t_s["target_ids"],
+			t_s["mask"],
+			ignore_bos=True,
+			min_tokens=2,
+		)
 		scores.append(float(ez))
-		
+
 	return scores
 
+
 def compute_min_k_scores(
-    tokenizer,
-    target_model,
-    texts: List[str],
-    device: torch.device,
-    sequence_length: int = 128,
-    batch_size: int = 32,
-    k_percent: float = 20.0,
+	tokenizer,
+	target_model,
+	texts: List[str],
+	device: torch.device,
+	sequence_length: int = 128,
+	batch_size: int = 32,
+	k_percent: float = 20.0,
+	defense: str = "none",
+	noise_std: float = 0.0,
 ) -> List[float]:
-    """Compute Min-K% Prob score per example using the target model."""
-    t_stats_list = _extract_stats_for_model(
-        target_model,
-        tokenizer,
-        texts,
-        device,
-        sequence_length,
-        batch_size,
-    )
+	t_stats_list = _extract_stats_for_model(
+		target_model,
+		tokenizer,
+		texts,
+		device,
+		sequence_length,
+		batch_size,
+		defense=defense,
+		noise_std=noise_std,
+	)
 
-    target_model.to("cpu")
-    torch.cuda.empty_cache()
+	target_model.to("cpu")
+	torch.cuda.empty_cache()
 
-    scores: List[float] = []
+	scores: List[float] = []
 
-    for t_s in t_stats_list:
-        score = min_k_percent_score(
-            t_s["correct"],
-            t_s["mask"],
-            k_percent=k_percent,
-            ignore_bos=True,
-            min_tokens=2,
-        )
-        scores.append(float(score))
+	for t_s in t_stats_list:
+		score = min_k_percent_score(
+			t_s["correct"],
+			t_s["mask"],
+			k_percent=k_percent,
+			ignore_bos=True,
+			min_tokens=2,
+		)
+		scores.append(float(score))
 
-    return scores
-
+	return scores
 
 def build_distillation_reference(
 	tokenizer,

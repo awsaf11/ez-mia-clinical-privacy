@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 
 AttackRefVariant = Literal["base", "distillation", "sft"]
+DefenseType = Literal["none", "output_perturbation"]
 
 @dataclass
 class AttackConfig:
@@ -16,6 +17,9 @@ class AttackConfig:
 
     seed: int = 42
     save_artifacts_path: str | None = None
+
+    defense: DefenseType = "none"
+    noise_std: float = 0.0
 
     domain_dataset: str | None = None
 
