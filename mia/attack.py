@@ -75,6 +75,9 @@ def save_artifacts(
 		"num_nonmembers": len(nonmember_texts),
 		"defense": cfg.defense,
 		"noise_std": cfg.noise_std,
+		"risk_k_percent": cfg.risk_k_percent,
+    	"smoothing_alpha": cfg.smoothing_alpha,
+    	"adaptive_beta": cfg.adaptive_beta,
 	}
 	with open(config_path, "w") as f:
 		json.dump(config_data, f, indent=2)
@@ -257,6 +260,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		noise_std=cfg.noise_std,
 		risk_k_percent=cfg.risk_k_percent,
 		smoothing_alpha=cfg.smoothing_alpha,
+		adaptive_beta=cfg.adaptive_beta,
 	)
 
 	scores_nm = compute_ez_scores(
@@ -271,6 +275,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		noise_std=cfg.noise_std,
 		risk_k_percent=cfg.risk_k_percent,
 		smoothing_alpha=cfg.smoothing_alpha,
+		adaptive_beta=cfg.adaptive_beta,
 	)
 
 	tqdm.write("[eval] Computing Min-K% scores from target_model on target data...")
@@ -285,6 +290,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		noise_std=cfg.noise_std,
 		risk_k_percent=cfg.risk_k_percent,
 		smoothing_alpha=cfg.smoothing_alpha,
+		adaptive_beta=cfg.adaptive_beta,
 	)
 
 	min_k_scores_nm = compute_min_k_scores(
@@ -298,6 +304,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		noise_std=cfg.noise_std,
 		risk_k_percent=cfg.risk_k_percent,
 		smoothing_alpha=cfg.smoothing_alpha,
+		adaptive_beta=cfg.adaptive_beta,
 	)
 
 	y_eval = np.array([1] * len(scores_m) + [0] * len(scores_nm), dtype=np.int64)
@@ -330,6 +337,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 			member_texts=[x.text for x in target_member_examples],
 			nonmember_texts=[x.text for x in target_nonmember_examples],
 			cfg=cfg,
+			
 		)
 
 	return {

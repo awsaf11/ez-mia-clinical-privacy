@@ -315,6 +315,7 @@ def _extract_stats_for_model(
 	noise_std: float = 0.0,
 	risk_k_percent: float = 20.0,
 	smoothing_alpha: float = 0.8,
+	adaptive_beta: float = 2.0,
 ) -> List[Dict[str, Any]]:
 	model.eval()
 
@@ -380,14 +381,26 @@ def _extract_stats_for_model(
 					selected_positions = valid_positions[bottom_positions]
 					selected_logits = pred_logits[b, selected_positions, :]
 
+					selected_correct = correct_initial[b, selected_positions]
+					seq_valid_correct = correct_initial[b, valid_positions]
+
+					mu = seq_valid_correct.mean()
+					sigma = seq_valid_correct.std().clamp(min=1e-6)
+
+					risk_scores = (mu - selected_correct) / sigma
+					adaptive_alpha = torch.sigmoid(adaptive_beta * risk_scores)
+
+					adaptive_alpha = smoothing_alpha * adaptive_alpha
+					adaptive_alpha = adaptive_alpha.view(-1, 1)
+
 					mean_logits = selected_logits.mean(
 						dim=-1,
 						keepdim=True,
 					)
 
 					pred_logits[b, selected_positions, :] = (
-						smoothing_alpha * selected_logits
-						+ (1 - smoothing_alpha) * mean_logits
+						(1 - adaptive_alpha) * selected_logits
+						+ adaptive_alpha * mean_logits
 					)
 
 			lp = F.log_softmax(pred_logits, dim=-1)
@@ -424,7 +437,7 @@ def compute_ez_scores(
 	noise_std: float = 0.0,
 	risk_k_percent: float = 20.0,
 	smoothing_alpha: float = 0.8,
-	lift_strength: float = 0.5,
+	adaptive_beta: float = 2.0,
 ) -> List[float]:
 	t_stats_list = _extract_stats_for_model(
 		target_model,
@@ -437,7 +450,7 @@ def compute_ez_scores(
 		noise_std=noise_std,
 		risk_k_percent=risk_k_percent,
 		smoothing_alpha=smoothing_alpha,
-		lift_strength=lift_strength,
+		adaptive_beta=adaptive_beta,
 	)
 
 	target_model.to("cpu")
@@ -454,6 +467,7 @@ def compute_ez_scores(
 	    noise_std=noise_std,
 	    risk_k_percent=risk_k_percent,
 	    smoothing_alpha=smoothing_alpha,
+	    adaptive_beta=adaptive_beta,
 	)
 
 	scores: List[float] = []
@@ -485,7 +499,7 @@ def compute_min_k_scores(
 	noise_std: float = 0.0,
 	risk_k_percent: float = 20.0,
 	smoothing_alpha: float = 0.8,
-	lift_strength: float = 0.5,
+	adaptive_beta: float = 2.0,
 ) -> List[float]:
 	t_stats_list = _extract_stats_for_model(
 		target_model,
@@ -498,7 +512,7 @@ def compute_min_k_scores(
 		noise_std=noise_std,
 		risk_k_percent=risk_k_percent,
 		smoothing_alpha=smoothing_alpha,
-		lift_strength=lift_strength,
+		adaptive_beta=adaptive_beta,
 	)
 
 	target_model.to("cpu")

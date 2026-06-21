@@ -22,6 +22,7 @@ class AttackConfig:
     noise_std: float = 0.0
     risk_k_percent: float = 20.0
     smoothing_alpha: float = 0.8
+    adaptive_beta: float = 2.0
     domain_dataset: str | None = None
 
     train_total: int = 20000
