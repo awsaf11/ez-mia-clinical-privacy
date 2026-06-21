@@ -313,6 +313,8 @@ def _extract_stats_for_model(
 	batch_size: int,
 	defense: str = "none",
 	noise_std: float = 0.0,
+	risk_k_percent: float = 20.0,
+	smoothing_alpha: float = 0.8,
 ) -> List[Dict[str, Any]]:
 	model.eval()
 
@@ -339,12 +341,54 @@ def _extract_stats_for_model(
 			logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
 
 			if defense == "output_perturbation" and noise_std > 0:
-				#print(f"Applying output perturbation: sigma={noise_std}")
 				logits = logits + torch.randn_like(logits) * noise_std
 
 			pred_logits = logits[:, :-1, :]
 			target_ids = input_ids[:, 1:]
 			mask = attention_mask[:, 1:]
+
+			if defense == "bottom_k_smoothing":
+				lp_initial = F.log_softmax(pred_logits, dim=-1)
+				correct_initial = lp_initial.gather(
+					-1,
+					target_ids.unsqueeze(-1),
+				).squeeze(-1)
+
+				valid_correct = correct_initial.masked_fill(mask == 0, float("inf"))
+				num_tokens = mask.sum(dim=1)
+
+				k_counts = torch.clamp(
+					(num_tokens.float() * (risk_k_percent / 100.0)).ceil().long(),
+					min=1,
+				)
+
+				for b in range(pred_logits.shape[0]):
+					k = int(k_counts[b].item())
+					valid_positions = torch.where(mask[b] > 0)[0]
+
+					if len(valid_positions) == 0:
+						continue
+
+					k = min(k, len(valid_positions))
+
+					bottom_positions = torch.topk(
+						valid_correct[b, valid_positions],
+						k=k,
+						largest=False,
+					).indices
+
+					selected_positions = valid_positions[bottom_positions]
+					selected_logits = pred_logits[b, selected_positions, :]
+
+					mean_logits = selected_logits.mean(
+						dim=-1,
+						keepdim=True,
+					)
+
+					pred_logits[b, selected_positions, :] = (
+						smoothing_alpha * selected_logits
+						+ (1 - smoothing_alpha) * mean_logits
+					)
 
 			lp = F.log_softmax(pred_logits, dim=-1)
 			correct = lp.gather(-1, target_ids.unsqueeze(-1)).squeeze(-1)
@@ -363,6 +407,10 @@ def _extract_stats_for_model(
 
 	return stats_out
 
+			
+
+
+
 
 def compute_ez_scores(
 	tokenizer,
@@ -374,6 +422,9 @@ def compute_ez_scores(
 	batch_size: int = 32,
 	defense: str = "none",
 	noise_std: float = 0.0,
+	risk_k_percent: float = 20.0,
+	smoothing_alpha: float = 0.8,
+	lift_strength: float = 0.5,
 ) -> List[float]:
 	t_stats_list = _extract_stats_for_model(
 		target_model,
@@ -384,6 +435,9 @@ def compute_ez_scores(
 		batch_size,
 		defense=defense,
 		noise_std=noise_std,
+		risk_k_percent=risk_k_percent,
+		smoothing_alpha=smoothing_alpha,
+		lift_strength=lift_strength,
 	)
 
 	target_model.to("cpu")
@@ -396,6 +450,10 @@ def compute_ez_scores(
 		device,
 		sequence_length,
 		batch_size,
+		defense=defense,
+	    noise_std=noise_std,
+	    risk_k_percent=risk_k_percent,
+	    smoothing_alpha=smoothing_alpha,
 	)
 
 	scores: List[float] = []
@@ -425,6 +483,9 @@ def compute_min_k_scores(
 	k_percent: float = 20.0,
 	defense: str = "none",
 	noise_std: float = 0.0,
+	risk_k_percent: float = 20.0,
+	smoothing_alpha: float = 0.8,
+	lift_strength: float = 0.5,
 ) -> List[float]:
 	t_stats_list = _extract_stats_for_model(
 		target_model,
@@ -435,6 +496,9 @@ def compute_min_k_scores(
 		batch_size,
 		defense=defense,
 		noise_std=noise_std,
+		risk_k_percent=risk_k_percent,
+		smoothing_alpha=smoothing_alpha,
+		lift_strength=lift_strength,
 	)
 
 	target_model.to("cpu")

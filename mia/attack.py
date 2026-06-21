@@ -255,6 +255,8 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		batch_size=cfg.batch_size,
 		defense=cfg.defense,
 		noise_std=cfg.noise_std,
+		risk_k_percent=cfg.risk_k_percent,
+		smoothing_alpha=cfg.smoothing_alpha,
 	)
 
 	scores_nm = compute_ez_scores(
@@ -267,6 +269,8 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		batch_size=cfg.batch_size,
 		defense=cfg.defense,
 		noise_std=cfg.noise_std,
+		risk_k_percent=cfg.risk_k_percent,
+		smoothing_alpha=cfg.smoothing_alpha,
 	)
 
 	tqdm.write("[eval] Computing Min-K% scores from target_model on target data...")
@@ -279,6 +283,8 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		batch_size=cfg.batch_size,
 		defense=cfg.defense,
 		noise_std=cfg.noise_std,
+		risk_k_percent=cfg.risk_k_percent,
+		smoothing_alpha=cfg.smoothing_alpha,
 	)
 
 	min_k_scores_nm = compute_min_k_scores(
@@ -290,6 +296,8 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		batch_size=cfg.batch_size,
 		defense=cfg.defense,
 		noise_std=cfg.noise_std,
+		risk_k_percent=cfg.risk_k_percent,
+		smoothing_alpha=cfg.smoothing_alpha,
 	)
 
 	y_eval = np.array([1] * len(scores_m) + [0] * len(scores_nm), dtype=np.int64)

@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 
 
 AttackRefVariant = Literal["base", "distillation", "sft"]
-DefenseType = Literal["none", "output_perturbation"]
+DefenseType = Literal["none", "output_perturbation", "bottom_k_smoothing"]
 
 @dataclass
 class AttackConfig:
@@ -20,7 +20,8 @@ class AttackConfig:
 
     defense: DefenseType = "none"
     noise_std: float = 0.0
-
+    risk_k_percent: float = 20.0
+    smoothing_alpha: float = 0.8
     domain_dataset: str | None = None
 
     train_total: int = 20000
