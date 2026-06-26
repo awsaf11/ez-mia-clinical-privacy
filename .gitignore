@@ -6,12 +6,17 @@ __pycache__/
 venv/
 ezmia-env/
 
-# Results
-results.csv
+# Datasets
+data/
+
+# Experiment outputs
+results/
+artifacts/
 mia/results.csv
 
 # macOS
 .DS_Store
+
 
 
 
