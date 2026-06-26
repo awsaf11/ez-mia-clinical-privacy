@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import List, Dict, Any
@@ -76,8 +77,8 @@ def save_artifacts(
 		"defense": cfg.defense,
 		"noise_std": cfg.noise_std,
 		"risk_k_percent": cfg.risk_k_percent,
-    	"smoothing_alpha": cfg.smoothing_alpha,
-    	"adaptive_beta": cfg.adaptive_beta,
+		"smoothing_alpha": cfg.smoothing_alpha,
+		"adaptive_beta": cfg.adaptive_beta,
 	}
 	with open(config_path, "w") as f:
 		json.dump(config_data, f, indent=2)
@@ -188,6 +189,119 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		sequence_length=cfg.sequence_length,
 	)
 
+	epoch_results: List[Dict[str, Any]] = []
+
+	def evaluate_epoch(epoch: int, model, train_loss: float, val_loss: float | None) -> None:
+		tqdm.write(f"[epoch-eval] Evaluating epoch {epoch}/{cfg.epochs}...")
+
+		scores_m_epoch = compute_ez_scores(
+			tokenizer,
+			model,
+			ref_model,
+			[x.text for x in target_member_examples],
+			device,
+			sequence_length=cfg.sequence_length,
+			batch_size=cfg.batch_size,
+			defense=cfg.defense,
+			noise_std=cfg.noise_std,
+			risk_k_percent=cfg.risk_k_percent,
+			smoothing_alpha=cfg.smoothing_alpha,
+			adaptive_beta=cfg.adaptive_beta,
+		)
+
+		scores_nm_epoch = compute_ez_scores(
+			tokenizer,
+			model,
+			ref_model,
+			[x.text for x in target_nonmember_examples],
+			device,
+			sequence_length=cfg.sequence_length,
+			batch_size=cfg.batch_size,
+			defense=cfg.defense,
+			noise_std=cfg.noise_std,
+			risk_k_percent=cfg.risk_k_percent,
+			smoothing_alpha=cfg.smoothing_alpha,
+			adaptive_beta=cfg.adaptive_beta,
+		)
+
+		min_k_scores_m_epoch = compute_min_k_scores(
+			tokenizer,
+			model,
+			[x.text for x in target_member_examples],
+			device,
+			sequence_length=cfg.sequence_length,
+			batch_size=cfg.batch_size,
+			defense=cfg.defense,
+			noise_std=cfg.noise_std,
+			risk_k_percent=cfg.risk_k_percent,
+			smoothing_alpha=cfg.smoothing_alpha,
+			adaptive_beta=cfg.adaptive_beta,
+		)
+
+		min_k_scores_nm_epoch = compute_min_k_scores(
+			tokenizer,
+			model,
+			[x.text for x in target_nonmember_examples],
+			device,
+			sequence_length=cfg.sequence_length,
+			batch_size=cfg.batch_size,
+			defense=cfg.defense,
+			noise_std=cfg.noise_std,
+			risk_k_percent=cfg.risk_k_percent,
+			smoothing_alpha=cfg.smoothing_alpha,
+			adaptive_beta=cfg.adaptive_beta,
+		)
+
+		y_epoch = np.array(
+			[1] * len(scores_m_epoch) + [0] * len(scores_nm_epoch),
+			dtype=np.int64,
+		)
+
+		ez_scores_epoch = np.array(scores_m_epoch + scores_nm_epoch, dtype=np.float32)
+		ez_scores_epoch = np.nan_to_num(ez_scores_epoch, nan=0.0, posinf=0.0, neginf=0.0)
+
+		min_k_scores_epoch = np.array(
+			min_k_scores_m_epoch + min_k_scores_nm_epoch,
+			dtype=np.float32,
+		)
+		min_k_scores_epoch = np.nan_to_num(
+			min_k_scores_epoch,
+			nan=0.0,
+			posinf=0.0,
+			neginf=0.0,
+		)
+
+		ez_auc_epoch = float(roc_auc_score(y_epoch, ez_scores_epoch))
+		ez_tpr001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.01)
+		ez_tpr0001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.001)
+
+		min_k_auc_epoch = float(roc_auc_score(y_epoch, min_k_scores_epoch))
+		min_k_tpr001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.01)
+		min_k_tpr0001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.001)
+
+		epoch_results.append({
+			"epoch": epoch,
+			"train_loss": float(train_loss),
+			"val_loss": float(val_loss) if val_loss is not None else "",
+			"ez_auc": ez_auc_epoch,
+			"ez_tpr_at_fpr_0.01": float(ez_tpr001_epoch),
+			"ez_tpr_at_fpr_0.001": float(ez_tpr0001_epoch),
+			"min_k_auc": min_k_auc_epoch,
+			"min_k_tpr_at_fpr_0.01": float(min_k_tpr001_epoch),
+			"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001_epoch),
+		})
+
+		tqdm.write(
+			f"[epoch-eval] epoch={epoch}, "
+			f"EZ-MIA AUC={ez_auc_epoch:.6f}, "
+			f"Min-K% AUC={min_k_auc_epoch:.6f}"
+		)
+
+		model.to(device)
+		ref_model.to("cpu")
+		torch.cuda.empty_cache()
+		model.train()
+
 	_ = finetune_target(
 		target_model,
 		dl_target,
@@ -195,7 +309,29 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		lr=cfg.lr,
 		val_dataloader=target_val_dataloader,
 		load_best_on_val=True,
+		epoch_callback=evaluate_epoch,
 	)
+
+	epoch_curve_path = f"epoch_curve_{cfg.dataset}_{cfg.defense}_seed{cfg.seed}.csv"
+	with open(epoch_curve_path, "w", newline="") as f:
+		writer = csv.DictWriter(
+			f,
+			fieldnames=[
+				"epoch",
+				"train_loss",
+				"val_loss",
+				"ez_auc",
+				"ez_tpr_at_fpr_0.01",
+				"ez_tpr_at_fpr_0.001",
+				"min_k_auc",
+				"min_k_tpr_at_fpr_0.01",
+				"min_k_tpr_at_fpr_0.001",
+			],
+		)
+		writer.writeheader()
+		writer.writerows(epoch_results)
+
+	tqdm.write(f"[epoch-eval] Saved epoch curve to {epoch_curve_path}")
 
 	target_model.to("cpu")
 	torch.cuda.empty_cache()
@@ -337,7 +473,6 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 			member_texts=[x.text for x in target_member_examples],
 			nonmember_texts=[x.text for x in target_nonmember_examples],
 			cfg=cfg,
-			
 		)
 
 	return {
@@ -357,4 +492,5 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		"min_k_auc": min_k_auc,
 		"min_k_tpr_at_fpr_0.01": float(min_k_tpr001),
 		"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001),
+		"epoch_curve_path": epoch_curve_path,
 	}

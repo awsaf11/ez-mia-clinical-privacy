@@ -171,6 +171,7 @@ def finetune_target(
 	*,
 	val_dataloader: DataLoader | None = None,
 	load_best_on_val: bool = True,
+	epoch_callback=None,
 ) -> float:
 	if load_best_on_val and val_dataloader is None:
 		raise ValueError("Validation dataloader is required when load_best_on_val=True.")
@@ -183,7 +184,11 @@ def finetune_target(
 
 	optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 	total_steps = epochs * max(len(train_dataloader), 1)
-	scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
+	scheduler = get_linear_schedule_with_warmup(
+		optimizer,
+		num_warmup_steps=warmup_steps,
+		num_training_steps=total_steps,
+	)
 
 	last_train_loss = 0.0
 	best_val_loss: float | None = None
@@ -198,10 +203,17 @@ def finetune_target(
 		for epoch_idx in range(epochs):
 			total = 0.0
 			n = 0
-			epoch_bar = _progress(train_dataloader, desc=f"Train epoch {epoch_idx+1}/{epochs}", unit="batch")
+			epoch_bar = _progress(
+				train_dataloader,
+				desc=f"Train epoch {epoch_idx + 1}/{epochs}",
+				unit="batch",
+			)
 
 			for batch in epoch_bar:
-				batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+				batch = {
+					k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+					for k, v in batch.items()
+				}
 				outputs = model(**batch)
 				loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
 
@@ -223,10 +235,17 @@ def finetune_target(
 				with torch.no_grad():
 					vtotal = 0.0
 					vn = 0
-					val_bar = _progress(val_dataloader, desc=f"Val epoch {epoch_idx+1}/{epochs}", unit="batch")
+					val_bar = _progress(
+						val_dataloader,
+						desc=f"Val epoch {epoch_idx + 1}/{epochs}",
+						unit="batch",
+					)
 
 					for vbatch in val_bar:
-						vbatch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in vbatch.items()}
+						vbatch = {
+							k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+							for k, v in vbatch.items()
+						}
 						vout = model(**vbatch)
 						vloss = vout.loss if hasattr(vout, "loss") else vout[0]
 						vtotal += float(vloss.detach().cpu().item())
@@ -244,9 +263,21 @@ def finetune_target(
 						torch.save(model.state_dict(), best_state_path)
 
 			if val_avg is None:
-				tqdm.write(f"[train] epoch {epoch_idx+1}/{epochs} - loss: {last_train_loss:.6f}")
+				tqdm.write(
+					f"[train] epoch {epoch_idx + 1}/{epochs} - loss: {last_train_loss:.6f}"
+				)
 			else:
-				tqdm.write(f"[train] epoch {epoch_idx+1}/{epochs} - loss: {last_train_loss:.6f} - val_loss: {val_avg:.6f}")
+				tqdm.write(
+					f"[train] epoch {epoch_idx + 1}/{epochs} - loss: {last_train_loss:.6f} - val_loss: {val_avg:.6f}"
+				)
+
+			if epoch_callback is not None:
+				epoch_callback(
+					epoch=epoch_idx + 1,
+					model=model,
+					train_loss=last_train_loss,
+					val_loss=val_avg,
+				)
 
 		selected_loss = best_val_loss if best_val_loss is not None else last_train_loss
 
