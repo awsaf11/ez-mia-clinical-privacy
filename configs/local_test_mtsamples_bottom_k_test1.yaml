@@ -15,7 +15,7 @@ finetune_method: full
 
 defense: bottom_k_smoothing
 risk_k_percent: 50.0
-smoothing_alpha: 0.3
-
+smoothing_alpha: 0.9
+adaptive_beta: 6.0
 
 save_artifacts_path: ""
