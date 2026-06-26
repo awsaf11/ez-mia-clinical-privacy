@@ -311,32 +311,32 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		load_best_on_val=True,
 		epoch_callback=evaluate_epoch,
 	)
-	# Create results directory if it doesn't exist
+		# Create results directory if it doesn't exist
 	results_dir = Path("results")
 	results_dir.mkdir(parents=True, exist_ok=True)
 
 	epoch_curve_path = (
-	results_dir
-	/ f"epoch_curve_{cfg.dataset}_{cfg.defense}_seed{cfg.seed}.csv"
-)
-
-with open(epoch_curve_path, "w", newline="") as f:
-	writer = csv.DictWriter(
-		f,
-		fieldnames=[
-			"epoch",
-			"train_loss",
-			"val_loss",
-			"ez_auc",
-			"ez_tpr_at_fpr_0.01",
-			"ez_tpr_at_fpr_0.001",
-			"min_k_auc",
-			"min_k_tpr_at_fpr_0.01",
-			"min_k_tpr_at_fpr_0.001",
-		],
+		results_dir
+		/ f"epoch_curve_{cfg.dataset}_{cfg.defense}_seed{cfg.seed}.csv"
 	)
-	writer.writeheader()
-	writer.writerows(epoch_results)
+
+	with open(epoch_curve_path, "w", newline="") as f:
+		writer = csv.DictWriter(
+			f,
+			fieldnames=[
+				"epoch",
+				"train_loss",
+				"val_loss",
+				"ez_auc",
+				"ez_tpr_at_fpr_0.01",
+				"ez_tpr_at_fpr_0.001",
+				"min_k_auc",
+				"min_k_tpr_at_fpr_0.01",
+				"min_k_tpr_at_fpr_0.001",
+			],
+		)
+		writer.writeheader()
+		writer.writerows(epoch_results)
 
 	tqdm.write(f"[epoch-eval] Saved epoch curve to {epoch_curve_path}")
 
