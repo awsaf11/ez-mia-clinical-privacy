@@ -796,11 +796,8 @@ def compute_ez_scores(
 		device,
 		sequence_length,
 		batch_size,
-		defense=defense,
-	    noise_std=noise_std,
-	    risk_k_percent=risk_k_percent,
-	    smoothing_alpha=smoothing_alpha,
-	    adaptive_beta=adaptive_beta,
+		defense="none",
+	    noise_std=0.0,
 	)
 
 	scores: List[float] = []
