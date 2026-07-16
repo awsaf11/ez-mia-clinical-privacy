@@ -18,6 +18,7 @@ from .models import (
 	finetune_target,
 	compute_ez_scores,
 	compute_min_k_scores,
+	compute_utility_metrics,
 	build_distillation_reference,
 	build_sft_reference,
 )
@@ -311,6 +312,39 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		load_best_on_val=True,
 		epoch_callback=evaluate_epoch,
 	)
+
+	tqdm.write(
+		"[utility] Evaluating baseline and defended model utility..."
+	)
+
+	utility_results = compute_utility_metrics(
+		model=target_model,
+		tokenizer=tokenizer,
+		# These are held-out target-domain non-members.
+		texts=[x.text for x in target_nonmember_examples],
+		device=device,
+		sequence_length=cfg.sequence_length,
+		batch_size=cfg.batch_size,
+		defense=cfg.defense,
+		noise_std=cfg.noise_std,
+		risk_k_percent=cfg.risk_k_percent,
+		smoothing_alpha=cfg.smoothing_alpha,
+		adaptive_beta=cfg.adaptive_beta,
+	)
+
+	tqdm.write(
+		f"[utility] Baseline perplexity="
+		f"{utility_results['baseline_perplexity']:.6f}, "
+		f"Defended perplexity="
+		f"{utility_results['defended_perplexity']:.6f}, "
+		f"Change="
+		f"{utility_results['perplexity_change_percent']:+.2f}%, "
+		f"Top-1 agreement="
+		f"{utility_results['top1_agreement']:.6f}, "
+		f"JS divergence="
+		f"{utility_results['js_divergence']:.8f}"
+	)
+
 		# Create results directory if it doesn't exist
 	results_dir = Path("results")
 	results_dir.mkdir(parents=True, exist_ok=True)
@@ -500,4 +534,25 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		"min_k_tpr_at_fpr_0.01": float(min_k_tpr001),
 		"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001),
 		"epoch_curve_path": epoch_curve_path,
+				"baseline_perplexity": utility_results[
+			"baseline_perplexity"
+		],
+		"defended_perplexity": utility_results[
+			"defended_perplexity"
+		],
+		"perplexity_change_percent": utility_results[
+			"perplexity_change_percent"
+		],
+		"top1_agreement": utility_results[
+			"top1_agreement"
+		],
+		"js_divergence": utility_results[
+			"js_divergence"
+		],
+		"utility_token_count": utility_results[
+			"utility_token_count"
+		],
+		"utility_example_count": utility_results[
+			"utility_example_count"
+		],
 	}

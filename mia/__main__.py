@@ -30,13 +30,38 @@ def main():
 		cfg = load_attack_config_from_yaml(args.config)
 		res = run_attack(cfg)
 		#print(f"{cfg.dataset}, model={cfg.model_name}, ref={cfg.ref_variant}, AUC={res['auc']:.6f}, TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}")
+		#print(
+    #f"{cfg.dataset}, model={cfg.model_name}, ref={cfg.ref_variant}, "
+    #f"EZ-MIA AUC={res['auc']:.6f}, "
+    #f"EZ-MIA TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}, "
+    #f"Min-K% AUC={res['min_k_auc']:.6f}, "
+    #f"Min-K% TPR@0.1%FPR={res['min_k_tpr_at_fpr_0.001']:.3f}"
+	#	)
+
 		print(
-    f"{cfg.dataset}, model={cfg.model_name}, ref={cfg.ref_variant}, "
-    f"EZ-MIA AUC={res['auc']:.6f}, "
-    f"EZ-MIA TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}, "
-    f"Min-K% AUC={res['min_k_auc']:.6f}, "
-    f"Min-K% TPR@0.1%FPR={res['min_k_tpr_at_fpr_0.001']:.3f}"
-)
+			f"{cfg.dataset}, "
+			f"model={cfg.model_name}, "
+			f"ref={cfg.ref_variant}, "
+			f"defense={cfg.defense}, "
+			f"EZ-MIA AUC={res['auc']:.6f}, "
+			f"EZ-MIA TPR@0.1%FPR="
+			f"{res['tpr_at_fpr_0.001']:.3f}, "
+			f"Min-K% AUC={res['min_k_auc']:.6f}, "
+			f"Min-K% TPR@0.1%FPR="
+			f"{res['min_k_tpr_at_fpr_0.001']:.3f}, "
+			f"Baseline PPL="
+			f"{res['baseline_perplexity']:.4f}, "
+			f"Defended PPL="
+			f"{res['defended_perplexity']:.4f}, "
+			f"PPL Change="
+			f"{res['perplexity_change_percent']:+.2f}%, "
+			f"Top-1 Agreement="
+			f"{res['top1_agreement']:.4f}, "
+			f"JS Divergence="
+			f"{res['js_divergence']:.8f}"
+		)	
+
+
 		append_result_csv(res)
 		return
 

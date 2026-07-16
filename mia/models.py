@@ -451,7 +451,309 @@ def _extract_stats_for_model(
 
 	return stats_out
 
-			
+def compute_utility_metrics(
+	model,
+	tokenizer,
+	texts: List[str],
+	device: torch.device,
+	sequence_length: int = 128,
+	batch_size: int = 32,
+	defense: str = "none",
+	noise_std: float = 0.0,
+	risk_k_percent: float = 20.0,
+	smoothing_alpha: float = 0.8,
+	adaptive_beta: float = 2.0,
+) -> Dict[str, float]:
+	"""
+	Compare the original target-model outputs against defended outputs.
+
+	Metrics:
+	- Baseline perplexity
+	- Defended perplexity
+	- Relative perplexity change
+	- Top-1 prediction agreement
+	- Mean Jensen-Shannon divergence
+	"""
+
+	if not texts:
+		raise ValueError("Utility evaluation requires at least one text.")
+
+	model.eval()
+	model.to(device)
+
+	if hasattr(model.config, "use_cache"):
+		model.config.use_cache = True
+
+	# JS divergence requires several vocabulary-sized tensors.
+	# Use a smaller batch to reduce GPU-memory pressure.
+	utility_batch_size = max(1, min(int(batch_size), 4))
+
+	baseline_nll_sum = 0.0
+	defended_nll_sum = 0.0
+	agreement_count = 0
+	valid_token_count = 0
+	js_sum = 0.0
+
+	with torch.no_grad():
+		for start in range(0, len(texts), utility_batch_size):
+			batch_texts = texts[start:start + utility_batch_size]
+
+			encodings = tokenizer(
+				batch_texts,
+				padding="max_length",
+				truncation=True,
+				max_length=sequence_length,
+				return_tensors="pt",
+			)
+
+			input_ids = encodings["input_ids"].to(device)
+			attention_mask = encodings["attention_mask"].to(device)
+
+			outputs = model(
+				input_ids=input_ids,
+				attention_mask=attention_mask,
+			)
+
+			logits = (
+				outputs.logits
+				if hasattr(outputs, "logits")
+				else outputs[0]
+			)
+
+			# Original target-model logits.
+			baseline_pred_logits = logits[:, :-1, :]
+			target_ids = input_ids[:, 1:]
+			valid_mask = attention_mask[:, 1:].bool()
+
+			# The defense must operate on a copy so the baseline remains intact.
+			defended_pred_logits = baseline_pred_logits.clone()
+
+			if defense == "output_perturbation" and noise_std > 0:
+				defended_pred_logits = (
+					defended_pred_logits
+					+ torch.randn_like(defended_pred_logits) * noise_std
+				)
+
+			elif defense == "bottom_k_smoothing":
+				initial_log_probs = F.log_softmax(
+					defended_pred_logits,
+					dim=-1,
+				)
+
+				correct_initial = initial_log_probs.gather(
+					-1,
+					target_ids.unsqueeze(-1),
+				).squeeze(-1)
+
+				valid_correct = correct_initial.masked_fill(
+					~valid_mask,
+					float("inf"),
+				)
+
+				num_tokens = valid_mask.sum(dim=1)
+
+				k_counts = torch.clamp(
+					(
+						num_tokens.float()
+						* (risk_k_percent / 100.0)
+					).ceil().long(),
+					min=1,
+				)
+
+				for b in range(defended_pred_logits.shape[0]):
+					valid_positions = torch.where(valid_mask[b])[0]
+
+					if valid_positions.numel() == 0:
+						continue
+
+					k = min(
+						int(k_counts[b].item()),
+						int(valid_positions.numel()),
+					)
+
+					bottom_indices = torch.topk(
+						valid_correct[b, valid_positions],
+						k=k,
+						largest=False,
+					).indices
+
+					selected_positions = valid_positions[bottom_indices]
+
+					selected_logits = defended_pred_logits[
+						b,
+						selected_positions,
+						:,
+					]
+
+					selected_correct = correct_initial[
+						b,
+						selected_positions,
+					]
+
+					sequence_correct = correct_initial[
+						b,
+						valid_positions,
+					]
+
+					mu = sequence_correct.mean()
+					sigma = sequence_correct.std().clamp(min=1e-6)
+
+					risk_scores = (
+						mu - selected_correct
+					) / sigma
+
+					adaptive_alpha = smoothing_alpha * torch.sigmoid(
+						adaptive_beta * risk_scores
+					)
+
+					adaptive_alpha = adaptive_alpha.view(-1, 1)
+
+					mean_logits = selected_logits.mean(
+						dim=-1,
+						keepdim=True,
+					)
+
+					defended_pred_logits[
+						b,
+						selected_positions,
+						:
+					] = (
+						(1.0 - adaptive_alpha) * selected_logits
+						+ adaptive_alpha * mean_logits
+					)
+
+			# Log-probability distributions.
+			baseline_log_probs = F.log_softmax(
+				baseline_pred_logits,
+				dim=-1,
+			)
+
+			defended_log_probs = F.log_softmax(
+				defended_pred_logits,
+				dim=-1,
+			)
+
+			# Correct-token log probabilities for perplexity.
+			baseline_correct = baseline_log_probs.gather(
+				-1,
+				target_ids.unsqueeze(-1),
+			).squeeze(-1)
+
+			defended_correct = defended_log_probs.gather(
+				-1,
+				target_ids.unsqueeze(-1),
+			).squeeze(-1)
+
+			baseline_nll_sum += float(
+				(-baseline_correct[valid_mask]).sum().item()
+			)
+
+			defended_nll_sum += float(
+				(-defended_correct[valid_mask]).sum().item()
+			)
+
+			# Top-1 agreement with the undefended target model.
+			baseline_top1 = baseline_pred_logits.argmax(dim=-1)
+			defended_top1 = defended_pred_logits.argmax(dim=-1)
+
+			agreement_count += int(
+				(
+					baseline_top1[valid_mask]
+					== defended_top1[valid_mask]
+				).sum().item()
+			)
+
+			batch_valid_tokens = int(valid_mask.sum().item())
+			valid_token_count += batch_valid_tokens
+
+			# Jensen-Shannon divergence in log space.
+			log_mixture = torch.logaddexp(
+				baseline_log_probs,
+				defended_log_probs,
+			) - torch.log(
+				torch.tensor(
+					2.0,
+					device=device,
+					dtype=baseline_log_probs.dtype,
+				)
+			)
+
+			kl_baseline_to_mixture = torch.sum(
+				baseline_log_probs.exp()
+				* (baseline_log_probs - log_mixture),
+				dim=-1,
+			)
+
+			kl_defended_to_mixture = torch.sum(
+				defended_log_probs.exp()
+				* (defended_log_probs - log_mixture),
+				dim=-1,
+			)
+
+			js_per_token = 0.5 * (
+				kl_baseline_to_mixture
+				+ kl_defended_to_mixture
+			)
+
+			js_sum += float(js_per_token[valid_mask].sum().item())
+
+			# Release large vocabulary tensors before the next batch.
+			del (
+				outputs,
+				logits,
+				baseline_pred_logits,
+				defended_pred_logits,
+				baseline_log_probs,
+				defended_log_probs,
+				log_mixture,
+			)
+
+			if device.type == "cuda":
+				torch.cuda.empty_cache()
+
+	if valid_token_count == 0:
+		raise ValueError(
+			"Utility evaluation found no valid next-token positions."
+		)
+
+	mean_baseline_nll = baseline_nll_sum / valid_token_count
+	mean_defended_nll = defended_nll_sum / valid_token_count
+
+	baseline_perplexity = float(
+		torch.exp(torch.tensor(mean_baseline_nll)).item()
+	)
+
+	defended_perplexity = float(
+		torch.exp(torch.tensor(mean_defended_nll)).item()
+	)
+
+	if baseline_perplexity > 0:
+		perplexity_change_percent = (
+			(defended_perplexity - baseline_perplexity)
+			/ baseline_perplexity
+		) * 100.0
+	else:
+		perplexity_change_percent = float("nan")
+
+	top1_agreement = agreement_count / valid_token_count
+	mean_js_divergence = js_sum / valid_token_count
+
+	model.to("cpu")
+
+	if device.type == "cuda":
+		torch.cuda.empty_cache()
+
+	return {
+		"baseline_perplexity": baseline_perplexity,
+		"defended_perplexity": defended_perplexity,
+		"perplexity_change_percent": float(
+			perplexity_change_percent
+		),
+		"top1_agreement": float(top1_agreement),
+		"js_divergence": float(mean_js_divergence),
+		"utility_token_count": int(valid_token_count),
+		"utility_example_count": int(len(texts)),
+	}			
 
 
 
