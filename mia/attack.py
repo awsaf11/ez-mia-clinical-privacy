@@ -22,7 +22,7 @@ from .models import (
 	build_distillation_reference,
 	build_sft_reference,
 )
-from .metrics import tpr_at_fpr
+from .metrics import tpr_at_fpr, classification_metrics_at_fpr
 from .config import AttackConfig
 
 
@@ -275,10 +275,16 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		ez_auc_epoch = float(roc_auc_score(y_epoch, ez_scores_epoch))
 		ez_tpr001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.01)
 		ez_tpr0001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.001)
+		ez_cls_epoch = classification_metrics_at_fpr(
+			y_epoch, ez_scores_epoch, target_fpr=0.001
+		)
 
 		min_k_auc_epoch = float(roc_auc_score(y_epoch, min_k_scores_epoch))
 		min_k_tpr001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.01)
 		min_k_tpr0001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.001)
+		min_k_cls_epoch = classification_metrics_at_fpr(
+			y_epoch, min_k_scores_epoch, target_fpr=0.001
+		)
 
 		epoch_results.append({
 			"epoch": epoch,
@@ -287,9 +293,19 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 			"ez_auc": ez_auc_epoch,
 			"ez_tpr_at_fpr_0.01": float(ez_tpr001_epoch),
 			"ez_tpr_at_fpr_0.001": float(ez_tpr0001_epoch),
+			"ez_accuracy_at_fpr_0.001": ez_cls_epoch["accuracy"],
+			"ez_precision_at_fpr_0.001": ez_cls_epoch["precision"],
+			"ez_recall_at_fpr_0.001": ez_cls_epoch["recall"],
+			"ez_f1_at_fpr_0.001": ez_cls_epoch["f1"],
+			"ez_threshold_at_fpr_0.001": ez_cls_epoch["threshold"],
 			"min_k_auc": min_k_auc_epoch,
 			"min_k_tpr_at_fpr_0.01": float(min_k_tpr001_epoch),
 			"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001_epoch),
+			"min_k_accuracy_at_fpr_0.001": min_k_cls_epoch["accuracy"],
+			"min_k_precision_at_fpr_0.001": min_k_cls_epoch["precision"],
+			"min_k_recall_at_fpr_0.001": min_k_cls_epoch["recall"],
+			"min_k_f1_at_fpr_0.001": min_k_cls_epoch["f1"],
+			"min_k_threshold_at_fpr_0.001": min_k_cls_epoch["threshold"],
 		})
 
 		tqdm.write(
@@ -364,9 +380,19 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 				"ez_auc",
 				"ez_tpr_at_fpr_0.01",
 				"ez_tpr_at_fpr_0.001",
+				"ez_accuracy_at_fpr_0.001",
+				"ez_precision_at_fpr_0.001",
+				"ez_recall_at_fpr_0.001",
+				"ez_f1_at_fpr_0.001",
+				"ez_threshold_at_fpr_0.001",
 				"min_k_auc",
 				"min_k_tpr_at_fpr_0.01",
 				"min_k_tpr_at_fpr_0.001",
+				"min_k_accuracy_at_fpr_0.001",
+				"min_k_precision_at_fpr_0.001",
+				"min_k_recall_at_fpr_0.001",
+				"min_k_f1_at_fpr_0.001",
+				"min_k_threshold_at_fpr_0.001",
 			],
 		)
 		writer.writeheader()
@@ -491,6 +517,9 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	auc = float(roc_auc_score(y_eval, scores))
 	tpr001 = tpr_at_fpr(y_eval, scores, 0.01)
 	tpr0001 = tpr_at_fpr(y_eval, scores, 0.001)
+	ez_cls = classification_metrics_at_fpr(
+		y_eval, scores, target_fpr=0.001
+	)
 
 	min_k_scores = np.array(min_k_scores_m + min_k_scores_nm, dtype=np.float32)
 	min_k_scores = np.nan_to_num(min_k_scores, nan=0.0, posinf=0.0, neginf=0.0)
@@ -498,6 +527,9 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	min_k_auc = float(roc_auc_score(y_eval, min_k_scores))
 	min_k_tpr001 = tpr_at_fpr(y_eval, min_k_scores, 0.01)
 	min_k_tpr0001 = tpr_at_fpr(y_eval, min_k_scores, 0.001)
+	min_k_cls = classification_metrics_at_fpr(
+		y_eval, min_k_scores, target_fpr=0.001
+	)
 
 	tqdm.write(
 		f"[eval] Min-K% AUC={min_k_auc:.6f}, "
@@ -522,6 +554,12 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		"auc": auc,
 		"tpr_at_fpr_0.01": float(tpr001),
 		"tpr_at_fpr_0.001": float(tpr0001),
+		"accuracy_at_fpr_0.001": ez_cls["accuracy"],
+		"precision_at_fpr_0.001": ez_cls["precision"],
+		"recall_at_fpr_0.001": ez_cls["recall"],
+		"f1_at_fpr_0.001": ez_cls["f1"],
+		"threshold_at_fpr_0.001": ez_cls["threshold"],
+		"actual_fpr_at_fpr_0.001": ez_cls["actual_fpr"],
 		"seed": cfg.seed,
 		"target_model": cfg.model_name,
 		"train_total": cfg.train_total,
@@ -533,6 +571,12 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		"min_k_auc": min_k_auc,
 		"min_k_tpr_at_fpr_0.01": float(min_k_tpr001),
 		"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001),
+		"min_k_accuracy_at_fpr_0.001": min_k_cls["accuracy"],
+		"min_k_precision_at_fpr_0.001": min_k_cls["precision"],
+		"min_k_recall_at_fpr_0.001": min_k_cls["recall"],
+		"min_k_f1_at_fpr_0.001": min_k_cls["f1"],
+		"min_k_threshold_at_fpr_0.001": min_k_cls["threshold"],
+		"min_k_actual_fpr_at_fpr_0.001": min_k_cls["actual_fpr"],
 		"epoch_curve_path": epoch_curve_path,
 				"baseline_perplexity": utility_results[
 			"baseline_perplexity"
