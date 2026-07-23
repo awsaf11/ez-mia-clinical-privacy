@@ -107,13 +107,21 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	requested_val_total = int(cfg.val_total)
 
 	tqdm.write(f"[data] Sampling target dataset ({cfg.dataset})...")
-	_, _, target_member_examples, target_nonmember_examples, seq_iter = sample_splits(
+	training_member_examples, training_nonmember_examples, eval_member_examples, eval_nonmember_examples, seq_iter = sample_splits(
 		cfg.seed,
-		0,
+		cfg.train_total,
 		cfg.eval_total,
 		dataset=cfg.dataset,
 		sequence_length=cfg.sequence_length,
 		return_sequence_iter=True,
+	)
+
+	tqdm.write(
+		f"[data] Target splits: "
+		f"{len(training_member_examples)} training members, "
+		f"{len(training_nonmember_examples)} training non-members, "
+		f"{len(eval_member_examples)} evaluation members, "
+		f"{len(eval_nonmember_examples)} evaluation non-members"
 	)
 
 	tqdm.write(f"[data] Sampling domain dataset for {cfg.dataset}...")
@@ -169,7 +177,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		sequence_length=cfg.sequence_length,
 	)
 
-	tqdm.write(f"[target] Training target model on {len(target_member_examples)} target members...")
+	tqdm.write(f"[target] Training target model on {len(training_member_examples)} target members...")
 	target_model = build_model(
 		cfg.model_name,
 		tokenizer,
@@ -181,7 +189,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		lora_target_modules=cfg.lora_target_modules,
 	)
 
-	_target_texts = [x.text for x in target_member_examples]
+	_target_texts = [x.text for x in training_member_examples]
 	dl_target = prepare_lm_dataloader(
 		tokenizer,
 		_target_texts,
@@ -199,7 +207,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 			tokenizer,
 			model,
 			ref_model,
-			[x.text for x in target_member_examples],
+			[x.text for x in eval_member_examples],
 			device,
 			sequence_length=cfg.sequence_length,
 			batch_size=cfg.batch_size,
@@ -214,7 +222,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 			tokenizer,
 			model,
 			ref_model,
-			[x.text for x in target_nonmember_examples],
+			[x.text for x in eval_nonmember_examples],
 			device,
 			sequence_length=cfg.sequence_length,
 			batch_size=cfg.batch_size,
@@ -228,7 +236,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		min_k_scores_m_epoch = compute_min_k_scores(
 			tokenizer,
 			model,
-			[x.text for x in target_member_examples],
+			[x.text for x in eval_member_examples],
 			device,
 			sequence_length=cfg.sequence_length,
 			batch_size=cfg.batch_size,
@@ -242,7 +250,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		min_k_scores_nm_epoch = compute_min_k_scores(
 			tokenizer,
 			model,
-			[x.text for x in target_nonmember_examples],
+			[x.text for x in eval_nonmember_examples],
 			device,
 			sequence_length=cfg.sequence_length,
 			batch_size=cfg.batch_size,
@@ -337,7 +345,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		model=target_model,
 		tokenizer=tokenizer,
 		# These are held-out target-domain non-members.
-		texts=[x.text for x in target_nonmember_examples],
+		texts=[x.text for x in eval_nonmember_examples],
 		device=device,
 		sequence_length=cfg.sequence_length,
 		batch_size=cfg.batch_size,
@@ -455,7 +463,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		tokenizer,
 		target_model,
 		ref_model,
-		[x.text for x in target_member_examples],
+		[x.text for x in eval_member_examples],
 		device,
 		sequence_length=cfg.sequence_length,
 		batch_size=cfg.batch_size,
@@ -470,7 +478,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 		tokenizer,
 		target_model,
 		ref_model,
-		[x.text for x in target_nonmember_examples],
+		[x.text for x in eval_nonmember_examples],
 		device,
 		sequence_length=cfg.sequence_length,
 		batch_size=cfg.batch_size,
@@ -485,7 +493,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	min_k_scores_m = compute_min_k_scores(
 		tokenizer,
 		target_model,
-		[x.text for x in target_member_examples],
+		[x.text for x in eval_member_examples],
 		device,
 		sequence_length=cfg.sequence_length,
 		batch_size=cfg.batch_size,
@@ -499,7 +507,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	min_k_scores_nm = compute_min_k_scores(
 		tokenizer,
 		target_model,
-		[x.text for x in target_nonmember_examples],
+		[x.text for x in eval_nonmember_examples],
 		device,
 		sequence_length=cfg.sequence_length,
 		batch_size=cfg.batch_size,
@@ -543,8 +551,8 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 			target_model=target_model,
 			reference_model=ref_model,
 			tokenizer=tokenizer,
-			member_texts=[x.text for x in target_member_examples],
-			nonmember_texts=[x.text for x in target_nonmember_examples],
+			member_texts=[x.text for x in eval_member_examples],
+			nonmember_texts=[x.text for x in eval_nonmember_examples],
 			cfg=cfg,
 		)
 
