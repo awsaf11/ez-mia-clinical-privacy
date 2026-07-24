@@ -112,6 +112,18 @@ def sample_mtsamples_partition(
 		sequence_length=sequence_length,
 	)
 
+	# MTSamples contains repeated/template-like clinical text. Remove exact
+	# duplicate fixed-length sequences before partitioning so that no identical
+	# sequence can appear in two experimental subsets.
+	original_sequence_count = len(sequences)
+	sequences = list(dict.fromkeys(sequences))
+	duplicate_count = original_sequence_count - len(sequences)
+
+	if not sequences:
+		raise ValueError(
+			"No usable MTSamples sequences were produced after preprocessing."
+		)
+
 	target_member_needed = max(0, int(target_eval_total) // 2)
 	target_nonmember_needed = max(0, int(target_eval_total) // 2)
 	target_val_needed = max(0, int(target_val_total))
@@ -134,10 +146,14 @@ def sample_mtsamples_partition(
 	if len(sequences) < total_needed:
 		raise ValueError(
 			f"Requested {total_needed} disjoint MTSamples sequences of length "
-			f"{sequence_length}, but only produced {len(sequences)}. "
+			f"{sequence_length}, but only {len(sequences)} unique sequences "
+			f"were available after removing {duplicate_count} duplicates. "
 			"Reduce eval_total, train_total, val_total, distil_max_prompts, "
 			"or sequence_length."
 		)
+
+	if len(sequences) != len(set(sequences)):
+		raise RuntimeError("Internal error: MTSamples sequence deduplication failed.")
 
 	rng = np.random.RandomState(seed + 17)
 	rng.shuffle(sequences)
@@ -162,9 +178,20 @@ def sample_mtsamples_partition(
 	return partition
 
 
+_HF_DATASET_ALIASES = {
+	"ag_news": "fancyzhx/ag_news",
+	"xsum": "EdinburghNLP/xsum",
+	"wikitext": "Salesforce/wikitext",
+}
+
+
 def load_dataset(*args, **kwargs):
-	"""Wrapper enabling remote dataset scripts (needed for xsum on datasets<3)."""
-	kwargs.setdefault("trust_remote_code", True)
+	"""Compatibility wrapper for current Hugging Face dataset identifiers."""
+	kwargs.pop("trust_remote_code", None)
+
+	if args and isinstance(args[0], str):
+		args = (_HF_DATASET_ALIASES.get(args[0], args[0]), *args[1:])
+
 	return hf_load_dataset(*args, **kwargs)
 
 
