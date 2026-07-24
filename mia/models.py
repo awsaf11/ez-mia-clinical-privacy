@@ -162,17 +162,7 @@ def prepare_lm_dataloader(tokenizer, texts: List[str], batch_size: int, device: 
 		input_ids = encodings["input_ids"]
 		attention_mask = encodings["attention_mask"]
 		labels = input_ids.clone()
-
-		padding_tokens = (attention_mask == 0).sum().item()
-		total_tokens = attention_mask.numel()
-
-		print("=" * 50)
-		print(f"Batch size: {input_ids.shape[0]}")
-		print(f"Sequence length: {input_ids.shape[1]}")
-		print(f"Padding tokens: {padding_tokens}")
-		print(f"Total tokens: {total_tokens}")
-		print(f"Padding %: {100 * padding_tokens / total_tokens:.2f}%")
-		print("=" * 50)
+		labels[attention_mask == 0] = -100
 
 		return {
 			"input_ids": input_ids,
