@@ -31,7 +31,7 @@ _PREFIX_SOURCES = {
 	},
 	"xsum": {
 		"type": "hf_dataset",
-		"name": "cnn_dailymail",
+		"name": "abisee/cnn_dailymail",
 		"config": "3.0.0",
 		"split": "train",
 		"text_fields": ["article"],
@@ -39,18 +39,16 @@ _PREFIX_SOURCES = {
 	},
 	"tokyotech-llm/swallow-code": {
 		"type": "hf_dataset",
-		"name": "codeparrot/github-code-clean",
-		"languages": ["Python"],
+		"name": "codeparrot/codeparrot-clean",
 		"split": "train",
-		"text_fields": ["code"],
+		"text_fields": ["content"],
 		"streaming": True,
 	},
 	"swallow-code": {  # alias
 		"type": "hf_dataset",
-		"name": "codeparrot/github-code-clean",
-		"languages": ["Python"],
+		"name": "codeparrot/codeparrot-clean",
 		"split": "train",
-		"text_fields": ["code"],
+		"text_fields": ["content"],
 		"streaming": True,
 	},
 	"mtsamples": {
@@ -182,18 +180,53 @@ _HF_DATASET_ALIASES = {
 	"ag_news": "fancyzhx/ag_news",
 	"xsum": "EdinburghNLP/xsum",
 	"wikitext": "Salesforce/wikitext",
+	"cnn_dailymail": "abisee/cnn_dailymail",
+	# The old repository depends on a loading script rejected by recent
+	# `datasets` releases. This replacement is standard-format Python code.
+	"codeparrot/github-code-clean": "codeparrot/codeparrot-clean",
 }
 
 
 def load_dataset(*args, **kwargs):
-	"""Compatibility wrapper for current Hugging Face dataset identifiers."""
+	"""Load datasets through current canonical Hugging Face identifiers."""
 	kwargs.pop("trust_remote_code", None)
 
 	if args and isinstance(args[0], str):
-		args = (_HF_DATASET_ALIASES.get(args[0], args[0]), *args[1:])
+		requested_name = args[0]
+		canonical_name = _HF_DATASET_ALIASES.get(requested_name, requested_name)
+		args = (canonical_name, *args[1:])
+
+		# This option belonged to the old github-code-clean loading script.
+		if canonical_name == "codeparrot/codeparrot-clean":
+			kwargs.pop("languages", None)
 
 	return hf_load_dataset(*args, **kwargs)
 
+
+
+def _load_hf_split(
+	dataset_name: str,
+	*,
+	config: str | None = None,
+	split: str = "train",
+	streaming: bool = False,
+	**kwargs,
+):
+	"""Load one split without passing a positional None configuration."""
+	if config is None:
+		return load_dataset(
+			dataset_name,
+			split=split,
+			streaming=streaming,
+			**kwargs,
+		)
+	return load_dataset(
+		dataset_name,
+		config,
+		split=split,
+		streaming=streaming,
+		**kwargs,
+	)
 
 def _collect_streaming_texts(
 	text_iter,
@@ -415,11 +448,15 @@ def sample_splits(
 		return (training_member, training_nonmember, eval_member, eval_nonmember, seq_out) if return_sequence_iter else (training_member, training_nonmember, eval_member, eval_nonmember)
 	elif dataset.lower() in {"tokyotech-llm/swallow-code", "swallow-code"}:
 		def pick_text(ex):
-			for k in ("text", "content", "code", "docstring", "source"):
+			for k in ("content", "text", "code", "docstring", "source"):
 				if k in ex:
 					return ex[k]
 			return ex[next(iter(ex.keys()))]
-		text_iter = _streaming_text_iterator("codeparrot/github-code-clean", text_selector=pick_text, seed_val=seed, languages=["Python"])
+		text_iter = _streaming_text_iterator(
+			"codeparrot/codeparrot-clean",
+			text_selector=pick_text,
+			seed_val=seed,
+		)
 		tm = train_total // 2; em = eval_total // 2; tn = train_total // 2; en = eval_total // 2
 		member_needed = tm + em
 		nonmember_needed = tn + en
@@ -622,7 +659,12 @@ def sample_domain_splits(
 				else _texts_to_sequences_concat(buffer_texts, sequence_length=sequence_length)
 			)
 		else:
-			ds = load_dataset(cfg["name"], cfg.get("config"), split=cfg.get("split", "train"), streaming=False)
+			ds = _load_hf_split(
+				cfg["name"],
+				config=cfg.get("config"),
+				split=cfg.get("split", "train"),
+				streaming=False,
+			)
 			indices = rng.permutation(len(ds)).tolist()
 			text_iter = (_extract_text(ds[idx], cfg["text_fields"]) for idx in indices)
 			seq_iter = _sequence_generator(text_iter)
@@ -703,7 +745,12 @@ def sample_prefix_texts(
 				rng_stream = np.random.RandomState(seed + 31337)
 				rng_stream.shuffle(texts)
 			else:
-				ds = load_dataset(cfg["name"], cfg.get("config"), split=cfg.get("split", "train"), streaming=False)
+				ds = _load_hf_split(
+				cfg["name"],
+				config=cfg.get("config"),
+				split=cfg.get("split", "train"),
+				streaming=False,
+			)
 				indices = rng.permutation(len(ds)).tolist()
 				for idx in indices:
 					row = ds[idx]
@@ -842,8 +889,12 @@ def sample_validation_texts(
 		rng_stream.shuffle(buffer)
 		return buffer[:N]
 	elif ls in {"tokyotech-llm/swallow-code", "swallow-code"}:
-		pick_text = lambda ex: ex.get("text", ex.get("content", ex.get("code", ex.get("docstring", ex.get("source", "")))))
-		text_iter = _streaming_text_iterator("codeparrot/github-code-clean", text_selector=pick_text, seed_val=seed + 999, languages=["Python"])
+		pick_text = lambda ex: ex.get("content", ex.get("text", ex.get("code", ex.get("docstring", ex.get("source", "")))))
+		text_iter = _streaming_text_iterator(
+			"codeparrot/codeparrot-clean",
+			text_selector=pick_text,
+			seed_val=seed + 999,
+		)
 		buffer_texts = _collect_streaming_texts(
 			text_iter,
 			min_required=min(STREAM_SEQUENCE_BUFFER_TARGET, N * 2),
