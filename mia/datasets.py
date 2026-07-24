@@ -90,6 +90,78 @@ def _load_mtsamples_raw_texts() -> List[str]:
 STREAM_SEQUENCE_BUFFER_TARGET = 200_000
 
 
+def sample_mtsamples_partition(
+	seed: int,
+	*,
+	target_eval_total: int,
+	target_val_total: int,
+	domain_train_total: int,
+	domain_val_total: int,
+	distil_max_prompts: int = 0,
+	sequence_length: int = 128,
+) -> dict[str, list[str]]:
+	"""Create one deterministic, disjoint MTSamples partition for the full experiment.
+
+	The returned subsets never overlap by exact sequence. This keeps target attack
+	evaluation, target validation, reference-model training/validation, and
+	distillation prompts separate while preserving the same clinical domain.
+	"""
+	raw_texts = _load_mtsamples_raw_texts()
+	sequences = _texts_to_sequences_concat(
+		raw_texts,
+		sequence_length=sequence_length,
+	)
+
+	target_member_needed = max(0, int(target_eval_total) // 2)
+	target_nonmember_needed = max(0, int(target_eval_total) // 2)
+	target_val_needed = max(0, int(target_val_total))
+	domain_member_needed = max(0, int(domain_train_total) // 2)
+	domain_nonmember_needed = max(0, int(domain_train_total) // 2)
+	domain_val_needed = max(0, int(domain_val_total))
+	distil_needed = max(0, int(distil_max_prompts))
+
+	counts = {
+		"target_members": target_member_needed,
+		"target_nonmembers": target_nonmember_needed,
+		"target_validation": target_val_needed,
+		"domain_members": domain_member_needed,
+		"domain_nonmembers": domain_nonmember_needed,
+		"domain_validation": domain_val_needed,
+		"distillation_prompts": distil_needed,
+	}
+	total_needed = sum(counts.values())
+
+	if len(sequences) < total_needed:
+		raise ValueError(
+			f"Requested {total_needed} disjoint MTSamples sequences of length "
+			f"{sequence_length}, but only produced {len(sequences)}. "
+			"Reduce eval_total, train_total, val_total, distil_max_prompts, "
+			"or sequence_length."
+		)
+
+	rng = np.random.RandomState(seed + 17)
+	rng.shuffle(sequences)
+
+	partition: dict[str, list[str]] = {}
+	cursor = 0
+	for name, count in counts.items():
+		partition[name] = sequences[cursor:cursor + count]
+		cursor += count
+
+	# Defensive exact-overlap assertion.
+	seen: dict[str, str] = {}
+	for name, subset in partition.items():
+		for text in subset:
+			previous = seen.get(text)
+			if previous is not None:
+				raise RuntimeError(
+					f"MTSamples partition overlap detected between {previous} and {name}."
+				)
+			seen[text] = name
+
+	return partition
+
+
 def load_dataset(*args, **kwargs):
 	"""Wrapper enabling remote dataset scripts (needed for xsum on datasets<3)."""
 	kwargs.setdefault("trust_remote_code", True)

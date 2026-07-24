@@ -10,7 +10,14 @@ import torch
 from tqdm.auto import tqdm
 from sklearn.metrics import roc_auc_score
 
-from .datasets import sample_splits, sample_validation_texts, sample_prefix_texts, sample_domain_splits
+from .datasets import (
+	Example,
+	sample_splits,
+	sample_validation_texts,
+	sample_prefix_texts,
+	sample_domain_splits,
+	sample_mtsamples_partition,
+)
 from .models import (
 	build_tokenizer,
 	build_model,
@@ -107,42 +114,88 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	requested_val_total = int(cfg.val_total)
 
 	tqdm.write(f"[data] Sampling target dataset ({cfg.dataset})...")
-	_, _, target_member_examples, target_nonmember_examples, seq_iter = sample_splits(
-		cfg.seed,
-		0,
-		cfg.eval_total,
-		dataset=cfg.dataset,
-		sequence_length=cfg.sequence_length,
-		return_sequence_iter=True,
-	)
 
-	tqdm.write(f"[data] Sampling domain dataset for {cfg.dataset}...")
-	_, domain_nonmember_examples, domain_val_texts = sample_domain_splits(
-		cfg.seed,
-		cfg.train_total,
-		cfg.dataset,
-		sequence_length=cfg.sequence_length,
-		val_total=requested_val_total,
-	)
+	distil_seed_texts = None
+	if cfg.dataset.lower() == "mtsamples":
+		distil_prompt_count = (
+			int(cfg.distil_max_prompts)
+			if cfg.ref_variant == "distillation"
+			else 0
+		)
+		mtsamples_partition = sample_mtsamples_partition(
+			cfg.seed,
+			target_eval_total=cfg.eval_total,
+			target_val_total=requested_val_total,
+			domain_train_total=cfg.train_total,
+			domain_val_total=requested_val_total,
+			distil_max_prompts=distil_prompt_count,
+			sequence_length=cfg.sequence_length,
+		)
 
-	target_val_texts = sample_validation_texts(
-		cfg.seed,
-		requested_val_total,
-		dataset=cfg.dataset,
-		sequence_length=cfg.sequence_length,
-		sequence_iter=seq_iter,
-	)
+		target_member_examples = [
+			Example(id=f"member_{i}", text=text, label=1)
+			for i, text in enumerate(mtsamples_partition["target_members"])
+		]
+		target_nonmember_examples = [
+			Example(id=f"nonmember_{i}", text=text, label=0)
+			for i, text in enumerate(mtsamples_partition["target_nonmembers"])
+		]
+		domain_nonmember_examples = [
+			Example(id=f"domain_nonmember_{i}", text=text, label=0)
+			for i, text in enumerate(mtsamples_partition["domain_nonmembers"])
+		]
+		target_val_texts = mtsamples_partition["target_validation"]
+		domain_val_texts = mtsamples_partition["domain_validation"]
+		if cfg.ref_variant == "distillation":
+			distil_seed_texts = mtsamples_partition["distillation_prompts"]
+
+		tqdm.write(
+			"[data] Created disjoint MTSamples target, validation, "
+			"reference, and distillation partitions."
+		)
+	else:
+		_, _, target_member_examples, target_nonmember_examples, seq_iter = sample_splits(
+			cfg.seed,
+			0,
+			cfg.eval_total,
+			dataset=cfg.dataset,
+			sequence_length=cfg.sequence_length,
+			return_sequence_iter=True,
+		)
+
+		tqdm.write(f"[data] Sampling domain dataset for {cfg.dataset}...")
+		_, domain_nonmember_examples, domain_val_texts = sample_domain_splits(
+			cfg.seed,
+			cfg.train_total,
+			cfg.dataset,
+			sequence_length=cfg.sequence_length,
+			val_total=requested_val_total,
+		)
+
+		target_val_texts = sample_validation_texts(
+			cfg.seed,
+			requested_val_total,
+			dataset=cfg.dataset,
+			sequence_length=cfg.sequence_length,
+			sequence_iter=seq_iter,
+		)
 
 	if len(target_val_texts) < requested_val_total:
 		raise ValueError(
 			f"Requested {requested_val_total} target validation texts but only received {len(target_val_texts)}; validation set is mandatory."
 		)
 
-	distil_seed_texts = None
-	if cfg.ref_variant == "distillation":
-		distil_seed_texts = sample_prefix_texts(cfg.seed, cfg.dataset, max_texts=int(cfg.distil_max_prompts))
+	if cfg.ref_variant == "distillation" and distil_seed_texts is None:
+		distil_seed_texts = sample_prefix_texts(
+			cfg.seed,
+			cfg.dataset,
+			max_texts=int(cfg.distil_max_prompts),
+		)
 		if len(distil_seed_texts) < int(cfg.distil_max_prompts):
-			tqdm.write(f"[distil] collected {len(distil_seed_texts)} prefix texts (requested {int(cfg.distil_max_prompts)})")
+			tqdm.write(
+				f"[distil] collected {len(distil_seed_texts)} prefix texts "
+				f"(requested {int(cfg.distil_max_prompts)})"
+			)
 
 	tokenizer = build_tokenizer(cfg.model_name)
 
