@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
 from omegaconf import OmegaConf
 
 
 AttackRefVariant = Literal["base", "distillation", "sft"]
-DefenseType = Literal["none", "output_perturbation", "bottom_k_smoothing"]
+DefenseType = Literal[
+    "none",
+    "output_perturbation",
+    "bottom_k_smoothing",
+]
+
 
 @dataclass
 class AttackConfig:
@@ -59,9 +65,24 @@ class AttackConfig:
 
 
 def make_arg_parser() -> argparse.ArgumentParser:
-    """Create the CLI argument parser for running experiments (single run)."""
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default=None, help="Path to YAML config; when provided, runs a single experiment using YAML values")
+    """Create the CLI argument parser for a single experiment."""
+    ap = argparse.ArgumentParser(
+        description=(
+            "Run an MIA experiment using direct CLI arguments or a YAML "
+            "configuration file."
+        )
+    )
+
+    ap.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help=(
+            "Path to a YAML configuration file. When provided, the YAML "
+            "values are used for the experiment."
+        ),
+    )
+
     ap.add_argument(
         "--dataset",
         choices=[
@@ -72,7 +93,11 @@ def make_arg_parser() -> argparse.ArgumentParser:
         ],
         default="ag_news",
     )
-    ap.add_argument("--ref-variant", choices=["base", "distillation", "sft"], default="base")
+    ap.add_argument(
+        "--ref-variant",
+        choices=["base", "distillation", "sft"],
+        default="base",
+    )
     ap.add_argument(
         "--target-model",
         choices=[
@@ -83,17 +108,89 @@ def make_arg_parser() -> argparse.ArgumentParser:
         ],
         default="gpt2",
     )
+
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--train-total", type=int, default=8000)
     ap.add_argument("--eval-total", type=int, default=2000)
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--lr", type=float, default=5e-5)
-    ap.add_argument("--sequence-length", type=int, default=128, help="Exact whitespace-token length for each training/eval example (truncates long samples, concatenates consecutive samples when short)")
+    ap.add_argument(
+        "--sequence-length",
+        type=int,
+        default=128,
+        help=(
+            "Exact whitespace-token length for each training/evaluation "
+            "example. Long samples are truncated and short consecutive "
+            "samples may be concatenated."
+        ),
+    )
+    ap.add_argument(
+        "--val-total",
+        type=int,
+        default=500,
+        help=(
+            "Number of validation examples sampled independently from the "
+            "training and evaluation subsets."
+        ),
+    )
 
-    ap.add_argument("--val-total", type=int, default=500, help="Number of validation datapoints sampled from the original dataset (independent of train/eval subsets)")
+    # Defense configuration
+    ap.add_argument(
+        "--defense",
+        choices=[
+            "none",
+            "output_perturbation",
+            "bottom_k_smoothing",
+        ],
+        default="none",
+        help="Defense applied during attack scoring and utility evaluation.",
+    )
+    ap.add_argument(
+        "--noise-std",
+        type=float,
+        default=0.0,
+        help=(
+            "Standard deviation of output noise used by the "
+            "output_perturbation defense."
+        ),
+    )
+    ap.add_argument(
+        "--risk-k-percent",
+        type=float,
+        default=20.0,
+        help=(
+            "Percentage of highest-risk token positions considered by the "
+            "adaptive defense logic."
+        ),
+    )
+    ap.add_argument(
+        "--smoothing-alpha",
+        type=float,
+        default=0.8,
+        help="Smoothing strength used by bottom_k_smoothing.",
+    )
+    ap.add_argument(
+        "--adaptive-beta",
+        type=float,
+        default=2.0,
+        help="Adaptive scaling factor used by the defense.",
+    )
+    ap.add_argument(
+        "--domain-dataset",
+        type=str,
+        default=None,
+        help=(
+            "Optional domain dataset override. When omitted, the target "
+            "dataset is used by the existing domain-sampling logic."
+        ),
+    )
 
-    ap.add_argument("--finetune-method", choices=["auto", "full", "lora"], default="auto")
+    ap.add_argument(
+        "--finetune-method",
+        choices=["auto", "full", "lora"],
+        default="auto",
+    )
     ap.add_argument("--lora-r", type=int, default=8)
     ap.add_argument("--lora-alpha", type=int, default=16)
     ap.add_argument("--lora-dropout", type=float, default=0.05)
@@ -112,21 +209,35 @@ def make_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--sft-train-batch", type=int, default=16)
     ap.add_argument("--sft-train-lr", type=float, default=1e-4)
 
-    ap.add_argument("--save-artifacts-path", type=str, default=None,
-                    help="Path to save models and data for later use with verification_harness.py (disabled by default)")
+    ap.add_argument(
+        "--save-artifacts-path",
+        type=str,
+        default=None,
+        help=(
+            "Path to save models and data for later use with "
+            "verification_harness.py. Disabled by default."
+        ),
+    )
+
     return ap
 
 
 def load_attack_config_from_yaml(path: str) -> AttackConfig:
-    """Load AttackConfig from a YAML file using OmegaConf.
+    """Load AttackConfig from YAML using OmegaConf.
 
-    The YAML may contain any AttackConfig fields; missing fields use dataclass defaults.
+    The YAML may contain any AttackConfig fields. Missing fields use the
+    dataclass defaults.
     """
     cfg_path = Path(path)
     if not cfg_path.exists():
         raise FileNotFoundError(f"Config YAML not found: {path}")
+
     oc = OmegaConf.load(str(cfg_path))
     data = OmegaConf.to_container(oc, resolve=True) or {}
+
     if not isinstance(data, dict):
-        raise ValueError("YAML root must be a mapping of AttackConfig fields")
+        raise ValueError(
+            "YAML root must be a mapping of AttackConfig fields"
+        )
+
     return AttackConfig(**data)
