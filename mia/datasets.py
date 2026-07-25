@@ -15,6 +15,43 @@ class Example:
 	label: int
 
 
+def assert_disjoint_text_partitions(
+	partitions: dict[str, list[str] | list[Example]],
+) -> dict[str, int]:
+	"""Reject exact sequence overlap across experimental partitions.
+
+	Whitespace is normalized before comparison so formatting-only differences do
+	not allow the same sequence to appear under two different membership labels.
+	Repeated text inside one partition is not treated as cross-partition overlap.
+	"""
+	seen_partition: dict[str, str] = {}
+	counts: dict[str, int] = {}
+
+	for partition_name, items in partitions.items():
+		counts[partition_name] = len(items)
+
+		for item in items:
+			text = item.text if isinstance(item, Example) else str(item)
+			normalized = " ".join(text.split())
+
+			if not normalized:
+				continue
+
+			previous_partition = seen_partition.get(normalized)
+			if (
+				previous_partition is not None
+				and previous_partition != partition_name
+			):
+				raise RuntimeError(
+					"Exact sequence overlap detected between "
+					f"'{previous_partition}' and '{partition_name}'."
+				)
+
+			seen_partition.setdefault(normalized, partition_name)
+
+	return counts
+
+
 _PREFIX_SOURCES = {
 	"wikitext": {
 		"type": "parquet",

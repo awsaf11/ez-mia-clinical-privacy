@@ -17,6 +17,7 @@ from .datasets import (
 	sample_prefix_texts,
 	sample_domain_splits,
 	sample_mtsamples_partition,
+	assert_disjoint_text_partitions,
 )
 from .models import (
 	build_tokenizer,
@@ -196,6 +197,29 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 				f"[distil] collected {len(distil_seed_texts)} prefix texts "
 				f"(requested {int(cfg.distil_max_prompts)})"
 			)
+
+
+	experiment_partitions = {
+		"target_members": target_member_examples,
+		"target_nonmembers": target_nonmember_examples,
+		"target_validation": target_val_texts,
+		"domain_nonmembers": domain_nonmember_examples,
+		"domain_validation": domain_val_texts,
+	}
+
+	if distil_seed_texts is not None:
+		experiment_partitions["distillation_prompts"] = distil_seed_texts
+
+	checked_partition_counts = assert_disjoint_text_partitions(
+		experiment_partitions
+	)
+	tqdm.write(
+		"[data] Exact-overlap validation passed: "
+		+ ", ".join(
+			f"{name}={count}"
+			for name, count in checked_partition_counts.items()
+		)
+	)
 
 	tokenizer = build_tokenizer(cfg.model_name)
 
