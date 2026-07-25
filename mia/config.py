@@ -63,6 +63,145 @@ class AttackConfig:
     sft_train_batch: int = 16
     sft_train_lr: float = 1e-4
 
+    def validate(self) -> None:
+        """Validate experiment settings before an attack run starts."""
+        if not self.dataset or not self.dataset.strip():
+            raise ValueError("dataset must be a non-empty string.")
+
+        if self.ref_variant not in {"base", "distillation", "sft"}:
+            raise ValueError(
+                "ref_variant must be one of: base, distillation, sft."
+            )
+
+        if self.defense not in {
+            "none",
+            "output_perturbation",
+            "bottom_k_smoothing",
+        }:
+            raise ValueError(
+                "defense must be one of: none, output_perturbation, "
+                "bottom_k_smoothing."
+            )
+
+        if self.finetune_method not in {"auto", "full", "lora"}:
+            raise ValueError(
+                "finetune_method must be one of: auto, full, lora."
+            )
+
+        if self.train_total <= 0:
+            raise ValueError("train_total must be greater than zero.")
+
+        if self.train_total % 2 != 0:
+            raise ValueError(
+                f"train_total must be even (got {self.train_total})."
+            )
+
+        if self.eval_total <= 0:
+            raise ValueError("eval_total must be greater than zero.")
+
+        if self.eval_total % 2 != 0:
+            raise ValueError(
+                f"eval_total must be even (got {self.eval_total})."
+            )
+
+        if self.val_total <= 0:
+            raise ValueError("val_total must be greater than zero.")
+
+        if self.epochs <= 0:
+            raise ValueError("epochs must be greater than zero.")
+
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be greater than zero.")
+
+        if self.lr <= 0:
+            raise ValueError("lr must be greater than zero.")
+
+        if self.sequence_length < 2:
+            raise ValueError(
+                "sequence_length must be at least 2 for next-token scoring."
+            )
+
+        if self.noise_std < 0:
+            raise ValueError("noise_std must be non-negative.")
+
+        if not 0.0 < self.risk_k_percent <= 100.0:
+            raise ValueError(
+                "risk_k_percent must be greater than 0 and at most 100."
+            )
+
+        if not 0.0 <= self.smoothing_alpha <= 1.0:
+            raise ValueError(
+                "smoothing_alpha must be between 0 and 1."
+            )
+
+        if self.adaptive_beta < 0:
+            raise ValueError("adaptive_beta must be non-negative.")
+
+        if self.lora_r <= 0:
+            raise ValueError("lora_r must be greater than zero.")
+
+        if self.lora_alpha <= 0:
+            raise ValueError("lora_alpha must be greater than zero.")
+
+        if not 0.0 <= self.lora_dropout < 1.0:
+            raise ValueError(
+                "lora_dropout must be at least 0 and less than 1."
+            )
+
+        if self.distil_max_prompts < 0:
+            raise ValueError("distil_max_prompts must be non-negative.")
+
+        if self.distil_completions <= 0:
+            raise ValueError("distil_completions must be greater than zero.")
+
+        if self.distil_max_new_tokens <= 0:
+            raise ValueError(
+                "distil_max_new_tokens must be greater than zero."
+            )
+
+        if self.distil_temperature <= 0:
+            raise ValueError(
+                "distil_temperature must be greater than zero."
+            )
+
+        if not 0.0 < self.distil_top_p <= 1.0:
+            raise ValueError(
+                "distil_top_p must be greater than 0 and at most 1."
+            )
+
+        if self.distil_input_max_tokens <= 0:
+            raise ValueError(
+                "distil_input_max_tokens must be greater than zero."
+            )
+
+        if self.distil_train_epochs <= 0:
+            raise ValueError(
+                "distil_train_epochs must be greater than zero."
+            )
+
+        if self.distil_train_batch <= 0:
+            raise ValueError(
+                "distil_train_batch must be greater than zero."
+            )
+
+        if self.distil_train_lr <= 0:
+            raise ValueError(
+                "distil_train_lr must be greater than zero."
+            )
+
+        if self.sft_train_epochs <= 0:
+            raise ValueError(
+                "sft_train_epochs must be greater than zero."
+            )
+
+        if self.sft_train_batch <= 0:
+            raise ValueError(
+                "sft_train_batch must be greater than zero."
+            )
+
+        if self.sft_train_lr <= 0:
+            raise ValueError("sft_train_lr must be greater than zero.")
+
 
 def make_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser for a single experiment."""
@@ -89,6 +228,7 @@ def make_arg_parser() -> argparse.ArgumentParser:
             "ag_news",
             "xsum",
             "wikitext",
+            "mtsamples",
             "tokyotech-llm/swallow-code",
         ],
         default="ag_news",
@@ -135,7 +275,6 @@ def make_arg_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # Defense configuration
     ap.add_argument(
         "--defense",
         choices=[
@@ -223,11 +362,7 @@ def make_arg_parser() -> argparse.ArgumentParser:
 
 
 def load_attack_config_from_yaml(path: str) -> AttackConfig:
-    """Load AttackConfig from YAML using OmegaConf.
-
-    The YAML may contain any AttackConfig fields. Missing fields use the
-    dataclass defaults.
-    """
+    """Load and validate AttackConfig from a YAML file."""
     cfg_path = Path(path)
     if not cfg_path.exists():
         raise FileNotFoundError(f"Config YAML not found: {path}")
@@ -237,7 +372,9 @@ def load_attack_config_from_yaml(path: str) -> AttackConfig:
 
     if not isinstance(data, dict):
         raise ValueError(
-            "YAML root must be a mapping of AttackConfig fields"
+            "YAML root must be a mapping of AttackConfig fields."
         )
 
-    return AttackConfig(**data)
+    cfg = AttackConfig(**data)
+    cfg.validate()
+    return cfg

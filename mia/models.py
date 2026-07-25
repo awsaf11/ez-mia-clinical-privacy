@@ -969,6 +969,7 @@ def build_distillation_reference(
 		input_ids = encodings["input_ids"]
 		attention_mask = encodings["attention_mask"]
 		labels = input_ids.clone()
+		labels[attention_mask == 0] = -100
 		return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
 	if len(synthetic_texts) > 0:
