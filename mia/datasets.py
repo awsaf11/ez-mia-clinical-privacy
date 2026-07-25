@@ -1,3 +1,8 @@
+Library
+/
+datasets_swallow_disjoint.py
+
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -210,6 +215,112 @@ def sample_mtsamples_partition(
 				)
 			seen[text] = name
 
+	return partition
+
+
+def sample_swallow_code_partition(
+	seed: int,
+	*,
+	target_eval_total: int,
+	target_val_total: int,
+	domain_train_total: int,
+	domain_val_total: int,
+	distil_max_prompts: int = 0,
+	sequence_length: int = 128,
+) -> dict[str, list[str]]:
+	"""Create one deterministic, disjoint Swallow-Code experiment partition.
+
+	All target, validation, reference, and optional distillation subsets are drawn
+	from one deduplicated CodeParrot sequence pool. This prevents independently
+	sampled target and domain paths from reusing the same code sequence.
+	"""
+	target_member_needed = max(0, int(target_eval_total) // 2)
+	target_nonmember_needed = max(0, int(target_eval_total) // 2)
+	target_val_needed = max(0, int(target_val_total))
+	domain_member_needed = max(0, int(domain_train_total) // 2)
+	domain_nonmember_needed = max(0, int(domain_train_total) // 2)
+	domain_val_needed = max(0, int(domain_val_total))
+	distil_needed = max(0, int(distil_max_prompts))
+
+	counts = {
+		"target_members": target_member_needed,
+		"target_nonmembers": target_nonmember_needed,
+		"target_validation": target_val_needed,
+		"domain_members": domain_member_needed,
+		"domain_nonmembers": domain_nonmember_needed,
+		"domain_validation": domain_val_needed,
+		"distillation_prompts": distil_needed,
+	}
+	total_needed = sum(counts.values())
+	if total_needed <= 0:
+		return {name: [] for name in counts}
+
+	def pick_text(example):
+		if isinstance(example, dict):
+			for key in ("content", "text", "code", "docstring", "source"):
+				value = example.get(key)
+				if value:
+					return str(value)
+			if example:
+				return str(next(iter(example.values())))
+		return ""
+
+	text_iter = _streaming_text_iterator(
+		"codeparrot/codeparrot-clean",
+		text_selector=pick_text,
+		seed_val=seed,
+	)
+
+	# Tail construction yields at most one sequence per source document. Collect
+	# a generous deterministic buffer because some documents are too short and
+	# exact duplicates are removed before partitioning.
+	buffer_target = max(
+		STREAM_SEQUENCE_BUFFER_TARGET,
+		total_needed * 4,
+	)
+	buffer_texts = _collect_streaming_texts(
+		text_iter,
+		min_required=max(total_needed * 2, total_needed),
+		label="swallow-code texts",
+		buffer_target=buffer_target,
+	)
+	sequences = _texts_to_tail_sequences(
+		buffer_texts,
+		sequence_length=sequence_length,
+	)
+
+	# Normalize whitespace before deduplication so formatting-only differences do
+	# not place the same effective sequence in multiple experimental partitions.
+	unique_sequences: list[str] = []
+	seen: set[str] = set()
+	for sequence in sequences:
+		normalized = " ".join(sequence.split())
+		if not normalized or normalized in seen:
+			continue
+		seen.add(normalized)
+		unique_sequences.append(normalized)
+
+	duplicate_count = len(sequences) - len(unique_sequences)
+	if len(unique_sequences) < total_needed:
+		raise ValueError(
+			f"Requested {total_needed} disjoint Swallow-Code sequences of length "
+			f"{sequence_length}, but only {len(unique_sequences)} unique sequences "
+			f"were available after removing {duplicate_count} duplicates. Reduce "
+			"eval_total, train_total, val_total, distil_max_prompts, or "
+			"sequence_length."
+		)
+
+	rng = np.random.RandomState(seed + 17)
+	rng.shuffle(unique_sequences)
+
+	partition: dict[str, list[str]] = {}
+	cursor = 0
+	for name, count in counts.items():
+		partition[name] = unique_sequences[cursor:cursor + count]
+		cursor += count
+
+	# Keep a local defensive assertion in addition to the experiment-wide check.
+	assert_disjoint_text_partitions(partition)
 	return partition
 
 

@@ -1,3 +1,8 @@
+Library
+/
+attack_swallow_disjoint.py
+
+
 from __future__ import annotations
 
 import csv
@@ -17,6 +22,7 @@ from .datasets import (
 	sample_prefix_texts,
 	sample_domain_splits,
 	sample_mtsamples_partition,
+	sample_swallow_code_partition,
 	assert_disjoint_text_partitions,
 )
 from .models import (
@@ -117,7 +123,8 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 	tqdm.write(f"[data] Sampling target dataset ({cfg.dataset})...")
 
 	distil_seed_texts = None
-	if cfg.dataset.lower() == "mtsamples":
+	dataset_name = cfg.dataset.lower()
+	if dataset_name == "mtsamples":
 		distil_prompt_count = (
 			int(cfg.distil_max_prompts)
 			if cfg.ref_variant == "distillation"
@@ -152,6 +159,43 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
 
 		tqdm.write(
 			"[data] Created disjoint MTSamples target, validation, "
+			"reference, and distillation partitions."
+		)
+	elif dataset_name in {"tokyotech-llm/swallow-code", "swallow-code"}:
+		distil_prompt_count = (
+			int(cfg.distil_max_prompts)
+			if cfg.ref_variant == "distillation"
+			else 0
+		)
+		swallow_partition = sample_swallow_code_partition(
+			cfg.seed,
+			target_eval_total=cfg.eval_total,
+			target_val_total=requested_val_total,
+			domain_train_total=cfg.train_total,
+			domain_val_total=requested_val_total,
+			distil_max_prompts=distil_prompt_count,
+			sequence_length=cfg.sequence_length,
+		)
+
+		target_member_examples = [
+			Example(id=f"member_{i}", text=text, label=1)
+			for i, text in enumerate(swallow_partition["target_members"])
+		]
+		target_nonmember_examples = [
+			Example(id=f"nonmember_{i}", text=text, label=0)
+			for i, text in enumerate(swallow_partition["target_nonmembers"])
+		]
+		domain_nonmember_examples = [
+			Example(id=f"domain_nonmember_{i}", text=text, label=0)
+			for i, text in enumerate(swallow_partition["domain_nonmembers"])
+		]
+		target_val_texts = swallow_partition["target_validation"]
+		domain_val_texts = swallow_partition["domain_validation"]
+		if cfg.ref_variant == "distillation":
+			distil_seed_texts = swallow_partition["distillation_prompts"]
+
+		tqdm.write(
+			"[data] Created disjoint Swallow-Code target, validation, "
 			"reference, and distillation partitions."
 		)
 	else:
