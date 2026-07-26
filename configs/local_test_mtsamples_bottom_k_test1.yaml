@@ -13,7 +13,13 @@ sequence_length: 128
 model_name: gpt2
 finetune_method: full
 
+# Defence options 
 defense: bottom_k_smoothing
+
+# Min-K attack parameter
+min_k_percent: 20.0
+
+# ARTS defense parameter
 risk_k_percent: 50.0
 smoothing_alpha: 0.9
 adaptive_beta: 6.0
