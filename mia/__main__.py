@@ -35,6 +35,8 @@ def append_result_csv(row: dict):
         ref_variant = row["ref_variant"]
         seed = row["seed"]
         defense_name = row.get("defense", "none")
+        min_k_percent = float(row.get("min_k_percent", 20.0))
+        min_k_variant = f"min_k_{min_k_percent:g}_percent"
 
         # EZ-MIA metrics
         writer.writerow([
@@ -115,7 +117,7 @@ def append_result_csv(row: dict):
             target_model,
             ref_variant,
             defense_name,
-            "min_k_percent",
+            min_k_variant,
             "AUC",
             f"{row['min_k_auc']:.6f}",
             seed,
@@ -127,7 +129,7 @@ def append_result_csv(row: dict):
                 target_model,
                 ref_variant,
                 defense_name,
-                "min_k_percent",
+                min_k_variant,
                 "TPR@1%FPR",
                 f"{row['min_k_tpr_at_fpr_0.01']:.3f}",
                 seed,
@@ -138,7 +140,7 @@ def append_result_csv(row: dict):
             target_model,
             ref_variant,
             defense_name,
-            "min_k_percent",
+            min_k_variant,
             "TPR@0.1%FPR",
             f"{row['min_k_tpr_at_fpr_0.001']:.3f}",
             seed,
@@ -176,7 +178,7 @@ def append_result_csv(row: dict):
                 target_model,
                 ref_variant,
                 defense_name,
-                "min_k_percent",
+                min_k_variant,
                 metric_name,
                 f"{float(metric_value):.8f}",
                 seed,
@@ -236,6 +238,7 @@ def main():
             f"model={cfg.model_name}, "
             f"ref={cfg.ref_variant}, "
             f"defense={cfg.defense}, "
+            f"Min-K={cfg.min_k_percent:g}%, "
             f"EZ-MIA AUC={res['auc']:.6f}, "
             f"EZ-MIA TPR@0.1%FPR="
             f"{res['tpr_at_fpr_0.001']:.3f}, "
@@ -296,6 +299,7 @@ def main():
         val_total=args.val_total,
         defense=args.defense,
         noise_std=args.noise_std,
+        min_k_percent=args.min_k_percent,
         risk_k_percent=args.risk_k_percent,
         smoothing_alpha=args.smoothing_alpha,
         adaptive_beta=args.adaptive_beta,
@@ -314,6 +318,8 @@ def main():
         sft_train_lr=args.sft_train_lr,
     )
 
+    cfg.validate()
+
     res = run_attack(cfg)
 
     print(
@@ -321,6 +327,7 @@ def main():
         f"model={cfg.model_name}, "
         f"ref={cfg.ref_variant}, "
         f"defense={cfg.defense}, "
+        f"Min-K={cfg.min_k_percent:g}%, "
         f"AUC={res['auc']:.6f}, "
         f"TPR@0.1%FPR={res['tpr_at_fpr_0.001']:.3f}"
     )

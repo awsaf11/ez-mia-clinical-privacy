@@ -11,669 +11,680 @@ from tqdm.auto import tqdm
 from sklearn.metrics import roc_auc_score
 
 from .datasets import (
-	Example,
-	sample_splits,
-	sample_validation_texts,
-	sample_prefix_texts,
-	sample_domain_splits,
-	sample_mtsamples_partition,
-	assert_disjoint_text_partitions,
+    Example,
+    sample_splits,
+    sample_validation_texts,
+    sample_prefix_texts,
+    sample_domain_splits,
+    sample_mtsamples_partition,
+    assert_disjoint_text_partitions,
 )
 from .models import (
-	build_tokenizer,
-	build_model,
-	prepare_lm_dataloader,
-	finetune_target,
-	compute_ez_scores,
-	compute_min_k_scores,
-	compute_utility_metrics,
-	build_distillation_reference,
-	build_sft_reference,
+    build_tokenizer,
+    build_model,
+    prepare_lm_dataloader,
+    finetune_target,
+    compute_ez_scores,
+    compute_min_k_scores,
+    compute_utility_metrics,
+    build_distillation_reference,
+    build_sft_reference,
 )
 from .metrics import tpr_at_fpr, classification_metrics_at_fpr
 from .config import AttackConfig
 
 
 def save_artifacts(
-	save_path: str,
-	target_model,
-	reference_model,
-	tokenizer,
-	member_texts: List[str],
-	nonmember_texts: List[str],
-	cfg: AttackConfig,
+    save_path: str,
+    target_model,
+    reference_model,
+    tokenizer,
+    member_texts: List[str],
+    nonmember_texts: List[str],
+    cfg: AttackConfig,
 ) -> None:
-	save_dir = Path(save_path)
-	save_dir.mkdir(parents=True, exist_ok=True)
+    save_dir = Path(save_path)
+    save_dir.mkdir(parents=True, exist_ok=True)
 
-	tqdm.write(f"[save] Saving artifacts to {save_dir}...")
+    tqdm.write(f"[save] Saving artifacts to {save_dir}...")
 
-	target_model_path = save_dir / "target_model"
-	target_model.save_pretrained(target_model_path)
+    target_model_path = save_dir / "target_model"
+    target_model.save_pretrained(target_model_path)
 
-	reference_model_path = save_dir / "reference_model"
-	reference_model.save_pretrained(reference_model_path)
+    reference_model_path = save_dir / "reference_model"
+    reference_model.save_pretrained(reference_model_path)
 
-	tokenizer_path = save_dir / "tokenizer"
-	tokenizer.save_pretrained(tokenizer_path)
+    tokenizer_path = save_dir / "tokenizer"
+    tokenizer.save_pretrained(tokenizer_path)
 
-	data_path = save_dir / "data.json"
-	data = {
-		"member_texts": member_texts,
-		"nonmember_texts": nonmember_texts,
-	}
-	with open(data_path, "w") as f:
-		json.dump(data, f, indent=2)
+    data_path = save_dir / "data.json"
+    data = {
+        "member_texts": member_texts,
+        "nonmember_texts": nonmember_texts,
+    }
+    with open(data_path, "w") as f:
+        json.dump(data, f, indent=2)
 
-	config_path = save_dir / "config.json"
-	config_data = {
-		"dataset": cfg.dataset,
-		"ref_variant": cfg.ref_variant,
-		"seed": cfg.seed,
-		"model_name": cfg.model_name,
-		"sequence_length": cfg.sequence_length,
-		"epochs": cfg.epochs,
-		"lr": cfg.lr,
-		"batch_size": cfg.batch_size,
-		"finetune_method": cfg.finetune_method,
-		"lora_r": cfg.lora_r,
-		"lora_alpha": cfg.lora_alpha,
-		"lora_dropout": cfg.lora_dropout,
-		"train_total": cfg.train_total,
-		"eval_total": cfg.eval_total,
-		"num_members": len(member_texts),
-		"num_nonmembers": len(nonmember_texts),
-		"defense": cfg.defense,
-		"noise_std": cfg.noise_std,
-		"risk_k_percent": cfg.risk_k_percent,
-		"smoothing_alpha": cfg.smoothing_alpha,
-		"adaptive_beta": cfg.adaptive_beta,
-	}
-	with open(config_path, "w") as f:
-		json.dump(config_data, f, indent=2)
+    config_path = save_dir / "config.json"
+    config_data = {
+        "dataset": cfg.dataset,
+        "ref_variant": cfg.ref_variant,
+        "seed": cfg.seed,
+        "model_name": cfg.model_name,
+        "sequence_length": cfg.sequence_length,
+        "epochs": cfg.epochs,
+        "lr": cfg.lr,
+        "batch_size": cfg.batch_size,
+        "finetune_method": cfg.finetune_method,
+        "lora_r": cfg.lora_r,
+        "lora_alpha": cfg.lora_alpha,
+        "lora_dropout": cfg.lora_dropout,
+        "train_total": cfg.train_total,
+        "eval_total": cfg.eval_total,
+        "min_k_percent": cfg.min_k_percent,
+        "num_members": len(member_texts),
+        "num_nonmembers": len(nonmember_texts),
+        "defense": cfg.defense,
+        "noise_std": cfg.noise_std,
+        "risk_k_percent": cfg.risk_k_percent,
+        "smoothing_alpha": cfg.smoothing_alpha,
+        "adaptive_beta": cfg.adaptive_beta,
+    }
+    with open(config_path, "w") as f:
+        json.dump(config_data, f, indent=2)
 
-	tqdm.write(f"[save] Artifacts saved successfully to {save_dir}")
+    tqdm.write(f"[save] Artifacts saved successfully to {save_dir}")
 
 
 def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
-	def _set_seed(seed: int) -> None:
-		import random
-		random.seed(seed)
-		np.random.seed(seed)
-		torch.manual_seed(seed)
-		if torch.cuda.is_available():
-			torch.cuda.manual_seed_all(seed)
-			torch.backends.cudnn.deterministic = True
-			torch.backends.cudnn.benchmark = False
+    def _set_seed(seed: int) -> None:
+        import random
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
 
-	_set_seed(cfg.seed)
-	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _set_seed(cfg.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-	if not getattr(cfg, "val_total", None) or int(cfg.val_total) <= 0:
-		raise ValueError("val_total must be provided and > 0; validation is mandatory for selecting the best model checkpoint.")
+    if not getattr(cfg, "val_total", None) or int(cfg.val_total) <= 0:
+        raise ValueError("val_total must be provided and > 0; validation is mandatory for selecting the best model checkpoint.")
 
-	requested_val_total = int(cfg.val_total)
+    requested_val_total = int(cfg.val_total)
 
-	tqdm.write(f"[data] Sampling target dataset ({cfg.dataset})...")
+    tqdm.write(f"[data] Sampling target dataset ({cfg.dataset})...")
 
-	distil_seed_texts = None
-	if cfg.dataset.lower() == "mtsamples":
-		distil_prompt_count = (
-			int(cfg.distil_max_prompts)
-			if cfg.ref_variant == "distillation"
-			else 0
-		)
-		mtsamples_partition = sample_mtsamples_partition(
-			cfg.seed,
-			target_eval_total=cfg.eval_total,
-			target_val_total=requested_val_total,
-			domain_train_total=cfg.train_total,
-			domain_val_total=requested_val_total,
-			distil_max_prompts=distil_prompt_count,
-			sequence_length=cfg.sequence_length,
-		)
+    distil_seed_texts = None
+    if cfg.dataset.lower() == "mtsamples":
+        distil_prompt_count = (
+            int(cfg.distil_max_prompts)
+            if cfg.ref_variant == "distillation"
+            else 0
+        )
+        mtsamples_partition = sample_mtsamples_partition(
+            cfg.seed,
+            target_eval_total=cfg.eval_total,
+            target_val_total=requested_val_total,
+            domain_train_total=cfg.train_total,
+            domain_val_total=requested_val_total,
+            distil_max_prompts=distil_prompt_count,
+            sequence_length=cfg.sequence_length,
+        )
 
-		target_member_examples = [
-			Example(id=f"member_{i}", text=text, label=1)
-			for i, text in enumerate(mtsamples_partition["target_members"])
-		]
-		target_nonmember_examples = [
-			Example(id=f"nonmember_{i}", text=text, label=0)
-			for i, text in enumerate(mtsamples_partition["target_nonmembers"])
-		]
-		domain_nonmember_examples = [
-			Example(id=f"domain_nonmember_{i}", text=text, label=0)
-			for i, text in enumerate(mtsamples_partition["domain_nonmembers"])
-		]
-		target_val_texts = mtsamples_partition["target_validation"]
-		domain_val_texts = mtsamples_partition["domain_validation"]
-		if cfg.ref_variant == "distillation":
-			distil_seed_texts = mtsamples_partition["distillation_prompts"]
+        target_member_examples = [
+            Example(id=f"member_{i}", text=text, label=1)
+            for i, text in enumerate(mtsamples_partition["target_members"])
+        ]
+        target_nonmember_examples = [
+            Example(id=f"nonmember_{i}", text=text, label=0)
+            for i, text in enumerate(mtsamples_partition["target_nonmembers"])
+        ]
+        domain_nonmember_examples = [
+            Example(id=f"domain_nonmember_{i}", text=text, label=0)
+            for i, text in enumerate(mtsamples_partition["domain_nonmembers"])
+        ]
+        target_val_texts = mtsamples_partition["target_validation"]
+        domain_val_texts = mtsamples_partition["domain_validation"]
+        if cfg.ref_variant == "distillation":
+            distil_seed_texts = mtsamples_partition["distillation_prompts"]
 
-		tqdm.write(
-			"[data] Created disjoint MTSamples target, validation, "
-			"reference, and distillation partitions."
-		)
-	else:
-		_, _, target_member_examples, target_nonmember_examples, seq_iter = sample_splits(
-			cfg.seed,
-			0,
-			cfg.eval_total,
-			dataset=cfg.dataset,
-			sequence_length=cfg.sequence_length,
-			return_sequence_iter=True,
-		)
+        tqdm.write(
+            "[data] Created disjoint MTSamples target, validation, "
+            "reference, and distillation partitions."
+        )
+    else:
+        _, _, target_member_examples, target_nonmember_examples, seq_iter = sample_splits(
+            cfg.seed,
+            0,
+            cfg.eval_total,
+            dataset=cfg.dataset,
+            sequence_length=cfg.sequence_length,
+            return_sequence_iter=True,
+        )
 
-		tqdm.write(f"[data] Sampling domain dataset for {cfg.dataset}...")
-		_, domain_nonmember_examples, domain_val_texts = sample_domain_splits(
-			cfg.seed,
-			cfg.train_total,
-			cfg.dataset,
-			sequence_length=cfg.sequence_length,
-			val_total=requested_val_total,
-		)
+        tqdm.write(f"[data] Sampling domain dataset for {cfg.dataset}...")
+        _, domain_nonmember_examples, domain_val_texts = sample_domain_splits(
+            cfg.seed,
+            cfg.train_total,
+            cfg.dataset,
+            sequence_length=cfg.sequence_length,
+            val_total=requested_val_total,
+        )
 
-		target_val_texts = sample_validation_texts(
-			cfg.seed,
-			requested_val_total,
-			dataset=cfg.dataset,
-			sequence_length=cfg.sequence_length,
-			sequence_iter=seq_iter,
-		)
+        target_val_texts = sample_validation_texts(
+            cfg.seed,
+            requested_val_total,
+            dataset=cfg.dataset,
+            sequence_length=cfg.sequence_length,
+            sequence_iter=seq_iter,
+        )
 
-	if len(target_val_texts) < requested_val_total:
-		raise ValueError(
-			f"Requested {requested_val_total} target validation texts but only received {len(target_val_texts)}; validation set is mandatory."
-		)
+    if len(target_val_texts) < requested_val_total:
+        raise ValueError(
+            f"Requested {requested_val_total} target validation texts but only received {len(target_val_texts)}; validation set is mandatory."
+        )
 
-	if cfg.ref_variant == "distillation" and distil_seed_texts is None:
-		distil_seed_texts = sample_prefix_texts(
-			cfg.seed,
-			cfg.dataset,
-			max_texts=int(cfg.distil_max_prompts),
-		)
-		if len(distil_seed_texts) < int(cfg.distil_max_prompts):
-			tqdm.write(
-				f"[distil] collected {len(distil_seed_texts)} prefix texts "
-				f"(requested {int(cfg.distil_max_prompts)})"
-			)
+    if cfg.ref_variant == "distillation" and distil_seed_texts is None:
+        distil_seed_texts = sample_prefix_texts(
+            cfg.seed,
+            cfg.dataset,
+            max_texts=int(cfg.distil_max_prompts),
+        )
+        if len(distil_seed_texts) < int(cfg.distil_max_prompts):
+            tqdm.write(
+                f"[distil] collected {len(distil_seed_texts)} prefix texts "
+                f"(requested {int(cfg.distil_max_prompts)})"
+            )
 
 
-	experiment_partitions = {
-		"target_members": target_member_examples,
-		"target_nonmembers": target_nonmember_examples,
-		"target_validation": target_val_texts,
-		"domain_nonmembers": domain_nonmember_examples,
-		"domain_validation": domain_val_texts,
-	}
+    experiment_partitions = {
+        "target_members": target_member_examples,
+        "target_nonmembers": target_nonmember_examples,
+        "target_validation": target_val_texts,
+        "domain_nonmembers": domain_nonmember_examples,
+        "domain_validation": domain_val_texts,
+    }
 
-	if distil_seed_texts is not None:
-		experiment_partitions["distillation_prompts"] = distil_seed_texts
+    if distil_seed_texts is not None:
+        experiment_partitions["distillation_prompts"] = distil_seed_texts
 
-	checked_partition_counts = assert_disjoint_text_partitions(
-		experiment_partitions
-	)
-	tqdm.write(
-		"[data] Exact-overlap validation passed: "
-		+ ", ".join(
-			f"{name}={count}"
-			for name, count in checked_partition_counts.items()
-		)
-	)
+    checked_partition_counts = assert_disjoint_text_partitions(
+        experiment_partitions
+    )
+    tqdm.write(
+        "[data] Exact-overlap validation passed: "
+        + ", ".join(
+            f"{name}={count}"
+            for name, count in checked_partition_counts.items()
+        )
+    )
 
-	tokenizer = build_tokenizer(cfg.model_name)
+    tokenizer = build_tokenizer(cfg.model_name)
 
-	if cfg.finetune_method == "lora":
-		use_lora = True
-	elif cfg.finetune_method == "full":
-		use_lora = False
-	else:
-		use_lora = cfg.model_name.lower() != "gpt2"
+    if cfg.finetune_method == "lora":
+        use_lora = True
+    elif cfg.finetune_method == "full":
+        use_lora = False
+    else:
+        use_lora = cfg.model_name.lower() != "gpt2"
 
-	ref_model = build_model(cfg.model_name, tokenizer, device, use_lora=False)
-	ref_model.to("cpu")
+    ref_model = build_model(cfg.model_name, tokenizer, device, use_lora=False)
+    ref_model.to("cpu")
 
-	if len(domain_val_texts) < requested_val_total:
-		raise ValueError(
-			f"Requested {requested_val_total} domain validation texts but only received {len(domain_val_texts)}; validation set is mandatory."
-		)
+    if len(domain_val_texts) < requested_val_total:
+        raise ValueError(
+            f"Requested {requested_val_total} domain validation texts but only received {len(domain_val_texts)}; validation set is mandatory."
+        )
 
-	target_val_dataloader = prepare_lm_dataloader(
-		tokenizer,
-		target_val_texts,
-		batch_size=cfg.batch_size,
-		device=device,
-		sequence_length=cfg.sequence_length,
-	)
+    target_val_dataloader = prepare_lm_dataloader(
+        tokenizer,
+        target_val_texts,
+        batch_size=cfg.batch_size,
+        device=device,
+        sequence_length=cfg.sequence_length,
+    )
 
-	tqdm.write(f"[target] Training target model on {len(target_member_examples)} target members...")
-	target_model = build_model(
-		cfg.model_name,
-		tokenizer,
-		device,
-		use_lora=use_lora,
-		lora_r=cfg.lora_r,
-		lora_alpha=cfg.lora_alpha,
-		lora_dropout=cfg.lora_dropout,
-		lora_target_modules=cfg.lora_target_modules,
-	)
+    tqdm.write(f"[target] Training target model on {len(target_member_examples)} target members...")
+    target_model = build_model(
+        cfg.model_name,
+        tokenizer,
+        device,
+        use_lora=use_lora,
+        lora_r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+        lora_target_modules=cfg.lora_target_modules,
+    )
 
-	_target_texts = [x.text for x in target_member_examples]
-	dl_target = prepare_lm_dataloader(
-		tokenizer,
-		_target_texts,
-		batch_size=cfg.batch_size,
-		device=device,
-		sequence_length=cfg.sequence_length,
-	)
+    _target_texts = [x.text for x in target_member_examples]
+    dl_target = prepare_lm_dataloader(
+        tokenizer,
+        _target_texts,
+        batch_size=cfg.batch_size,
+        device=device,
+        sequence_length=cfg.sequence_length,
+    )
 
-	epoch_results: List[Dict[str, Any]] = []
+    epoch_results: List[Dict[str, Any]] = []
 
-	def evaluate_epoch(epoch: int, model, train_loss: float, val_loss: float | None) -> None:
-		tqdm.write(f"[epoch-eval] Evaluating epoch {epoch}/{cfg.epochs}...")
+    def evaluate_epoch(epoch: int, model, train_loss: float, val_loss: float | None) -> None:
+        tqdm.write(f"[epoch-eval] Evaluating epoch {epoch}/{cfg.epochs}...")
 
-		scores_m_epoch = compute_ez_scores(
-			tokenizer,
-			model,
-			ref_model,
-			[x.text for x in target_member_examples],
-			device,
-			sequence_length=cfg.sequence_length,
-			batch_size=cfg.batch_size,
-			defense=cfg.defense,
-			noise_std=cfg.noise_std,
-			risk_k_percent=cfg.risk_k_percent,
-			smoothing_alpha=cfg.smoothing_alpha,
-			adaptive_beta=cfg.adaptive_beta,
-		)
+        scores_m_epoch = compute_ez_scores(
+            tokenizer,
+            model,
+            ref_model,
+            [x.text for x in target_member_examples],
+            device,
+            sequence_length=cfg.sequence_length,
+            batch_size=cfg.batch_size,
+            defense=cfg.defense,
+            noise_std=cfg.noise_std,
+            risk_k_percent=cfg.risk_k_percent,
+            smoothing_alpha=cfg.smoothing_alpha,
+            adaptive_beta=cfg.adaptive_beta,
+        )
 
-		scores_nm_epoch = compute_ez_scores(
-			tokenizer,
-			model,
-			ref_model,
-			[x.text for x in target_nonmember_examples],
-			device,
-			sequence_length=cfg.sequence_length,
-			batch_size=cfg.batch_size,
-			defense=cfg.defense,
-			noise_std=cfg.noise_std,
-			risk_k_percent=cfg.risk_k_percent,
-			smoothing_alpha=cfg.smoothing_alpha,
-			adaptive_beta=cfg.adaptive_beta,
-		)
+        scores_nm_epoch = compute_ez_scores(
+            tokenizer,
+            model,
+            ref_model,
+            [x.text for x in target_nonmember_examples],
+            device,
+            sequence_length=cfg.sequence_length,
+            batch_size=cfg.batch_size,
+            defense=cfg.defense,
+            noise_std=cfg.noise_std,
+            risk_k_percent=cfg.risk_k_percent,
+            smoothing_alpha=cfg.smoothing_alpha,
+            adaptive_beta=cfg.adaptive_beta,
+        )
 
-		min_k_scores_m_epoch = compute_min_k_scores(
-			tokenizer,
-			model,
-			[x.text for x in target_member_examples],
-			device,
-			sequence_length=cfg.sequence_length,
-			batch_size=cfg.batch_size,
-			defense=cfg.defense,
-			noise_std=cfg.noise_std,
-			risk_k_percent=cfg.risk_k_percent,
-			smoothing_alpha=cfg.smoothing_alpha,
-			adaptive_beta=cfg.adaptive_beta,
-		)
+        min_k_scores_m_epoch = compute_min_k_scores(
+            tokenizer,
+            model,
+            [x.text for x in target_member_examples],
+            device,
+            sequence_length=cfg.sequence_length,
+            batch_size=cfg.batch_size,
+            k_percent=cfg.min_k_percent,
+            defense=cfg.defense,
+            noise_std=cfg.noise_std,
+            risk_k_percent=cfg.risk_k_percent,
+            smoothing_alpha=cfg.smoothing_alpha,
+            adaptive_beta=cfg.adaptive_beta,
+        )
 
-		min_k_scores_nm_epoch = compute_min_k_scores(
-			tokenizer,
-			model,
-			[x.text for x in target_nonmember_examples],
-			device,
-			sequence_length=cfg.sequence_length,
-			batch_size=cfg.batch_size,
-			defense=cfg.defense,
-			noise_std=cfg.noise_std,
-			risk_k_percent=cfg.risk_k_percent,
-			smoothing_alpha=cfg.smoothing_alpha,
-			adaptive_beta=cfg.adaptive_beta,
-		)
+        min_k_scores_nm_epoch = compute_min_k_scores(
+            tokenizer,
+            model,
+            [x.text for x in target_nonmember_examples],
+            device,
+            sequence_length=cfg.sequence_length,
+            batch_size=cfg.batch_size,
+            k_percent=cfg.min_k_percent,
+            defense=cfg.defense,
+            noise_std=cfg.noise_std,
+            risk_k_percent=cfg.risk_k_percent,
+            smoothing_alpha=cfg.smoothing_alpha,
+            adaptive_beta=cfg.adaptive_beta,
+        )
 
-		y_epoch = np.array(
-			[1] * len(scores_m_epoch) + [0] * len(scores_nm_epoch),
-			dtype=np.int64,
-		)
+        y_epoch = np.array(
+            [1] * len(scores_m_epoch) + [0] * len(scores_nm_epoch),
+            dtype=np.int64,
+        )
 
-		ez_scores_epoch = np.array(scores_m_epoch + scores_nm_epoch, dtype=np.float32)
-		ez_scores_epoch = np.nan_to_num(ez_scores_epoch, nan=0.0, posinf=0.0, neginf=0.0)
+        ez_scores_epoch = np.array(scores_m_epoch + scores_nm_epoch, dtype=np.float32)
+        ez_scores_epoch = np.nan_to_num(ez_scores_epoch, nan=0.0, posinf=0.0, neginf=0.0)
 
-		min_k_scores_epoch = np.array(
-			min_k_scores_m_epoch + min_k_scores_nm_epoch,
-			dtype=np.float32,
-		)
-		min_k_scores_epoch = np.nan_to_num(
-			min_k_scores_epoch,
-			nan=0.0,
-			posinf=0.0,
-			neginf=0.0,
-		)
+        min_k_scores_epoch = np.array(
+            min_k_scores_m_epoch + min_k_scores_nm_epoch,
+            dtype=np.float32,
+        )
+        min_k_scores_epoch = np.nan_to_num(
+            min_k_scores_epoch,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
 
-		ez_auc_epoch = float(roc_auc_score(y_epoch, ez_scores_epoch))
-		ez_tpr001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.01)
-		ez_tpr0001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.001)
-		ez_cls_epoch = classification_metrics_at_fpr(
-			y_epoch, ez_scores_epoch, target_fpr=0.001
-		)
+        ez_auc_epoch = float(roc_auc_score(y_epoch, ez_scores_epoch))
+        ez_tpr001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.01)
+        ez_tpr0001_epoch = tpr_at_fpr(y_epoch, ez_scores_epoch, 0.001)
+        ez_cls_epoch = classification_metrics_at_fpr(
+            y_epoch, ez_scores_epoch, target_fpr=0.001
+        )
 
-		min_k_auc_epoch = float(roc_auc_score(y_epoch, min_k_scores_epoch))
-		min_k_tpr001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.01)
-		min_k_tpr0001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.001)
-		min_k_cls_epoch = classification_metrics_at_fpr(
-			y_epoch, min_k_scores_epoch, target_fpr=0.001
-		)
+        min_k_auc_epoch = float(roc_auc_score(y_epoch, min_k_scores_epoch))
+        min_k_tpr001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.01)
+        min_k_tpr0001_epoch = tpr_at_fpr(y_epoch, min_k_scores_epoch, 0.001)
+        min_k_cls_epoch = classification_metrics_at_fpr(
+            y_epoch, min_k_scores_epoch, target_fpr=0.001
+        )
 
-		epoch_results.append({
-			"epoch": epoch,
-			"train_loss": float(train_loss),
-			"val_loss": float(val_loss) if val_loss is not None else "",
-			"ez_auc": ez_auc_epoch,
-			"ez_tpr_at_fpr_0.01": float(ez_tpr001_epoch),
-			"ez_tpr_at_fpr_0.001": float(ez_tpr0001_epoch),
-			"ez_accuracy_at_fpr_0.001": ez_cls_epoch["accuracy"],
-			"ez_precision_at_fpr_0.001": ez_cls_epoch["precision"],
-			"ez_recall_at_fpr_0.001": ez_cls_epoch["recall"],
-			"ez_f1_at_fpr_0.001": ez_cls_epoch["f1"],
-			"ez_threshold_at_fpr_0.001": ez_cls_epoch["threshold"],
-			"min_k_auc": min_k_auc_epoch,
-			"min_k_tpr_at_fpr_0.01": float(min_k_tpr001_epoch),
-			"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001_epoch),
-			"min_k_accuracy_at_fpr_0.001": min_k_cls_epoch["accuracy"],
-			"min_k_precision_at_fpr_0.001": min_k_cls_epoch["precision"],
-			"min_k_recall_at_fpr_0.001": min_k_cls_epoch["recall"],
-			"min_k_f1_at_fpr_0.001": min_k_cls_epoch["f1"],
-			"min_k_threshold_at_fpr_0.001": min_k_cls_epoch["threshold"],
-		})
+        epoch_results.append({
+            "epoch": epoch,
+            "train_loss": float(train_loss),
+            "val_loss": float(val_loss) if val_loss is not None else "",
+            "ez_auc": ez_auc_epoch,
+            "ez_tpr_at_fpr_0.01": float(ez_tpr001_epoch),
+            "ez_tpr_at_fpr_0.001": float(ez_tpr0001_epoch),
+            "ez_accuracy_at_fpr_0.001": ez_cls_epoch["accuracy"],
+            "ez_precision_at_fpr_0.001": ez_cls_epoch["precision"],
+            "ez_recall_at_fpr_0.001": ez_cls_epoch["recall"],
+            "ez_f1_at_fpr_0.001": ez_cls_epoch["f1"],
+            "ez_threshold_at_fpr_0.001": ez_cls_epoch["threshold"],
+            "min_k_auc": min_k_auc_epoch,
+            "min_k_tpr_at_fpr_0.01": float(min_k_tpr001_epoch),
+            "min_k_tpr_at_fpr_0.001": float(min_k_tpr0001_epoch),
+            "min_k_accuracy_at_fpr_0.001": min_k_cls_epoch["accuracy"],
+            "min_k_precision_at_fpr_0.001": min_k_cls_epoch["precision"],
+            "min_k_recall_at_fpr_0.001": min_k_cls_epoch["recall"],
+            "min_k_f1_at_fpr_0.001": min_k_cls_epoch["f1"],
+            "min_k_threshold_at_fpr_0.001": min_k_cls_epoch["threshold"],
+        })
 
-		tqdm.write(
-			f"[epoch-eval] epoch={epoch}, "
-			f"EZ-MIA AUC={ez_auc_epoch:.6f}, "
-			f"Min-K% AUC={min_k_auc_epoch:.6f}"
-		)
+        tqdm.write(
+            f"[epoch-eval] epoch={epoch}, "
+            f"EZ-MIA AUC={ez_auc_epoch:.6f}, "
+            f"Min-K% AUC={min_k_auc_epoch:.6f}"
+        )
 
-		model.to(device)
-		ref_model.to("cpu")
-		torch.cuda.empty_cache()
-		model.train()
+        model.to(device)
+        ref_model.to("cpu")
+        torch.cuda.empty_cache()
+        model.train()
 
-	_ = finetune_target(
-		target_model,
-		dl_target,
-		epochs=cfg.epochs,
-		lr=cfg.lr,
-		val_dataloader=target_val_dataloader,
-		load_best_on_val=True,
-		epoch_callback=evaluate_epoch,
-	)
+    _ = finetune_target(
+        target_model,
+        dl_target,
+        epochs=cfg.epochs,
+        lr=cfg.lr,
+        val_dataloader=target_val_dataloader,
+        load_best_on_val=True,
+        epoch_callback=evaluate_epoch,
+    )
 
-	tqdm.write(
-		"[utility] Evaluating baseline and defended model utility..."
-	)
+    tqdm.write(
+        "[utility] Evaluating baseline and defended model utility..."
+    )
 
-	utility_results = compute_utility_metrics(
-		model=target_model,
-		tokenizer=tokenizer,
-		# These are held-out target-domain non-members.
-		texts=[x.text for x in target_nonmember_examples],
-		device=device,
-		sequence_length=cfg.sequence_length,
-		batch_size=cfg.batch_size,
-		defense=cfg.defense,
-		noise_std=cfg.noise_std,
-		risk_k_percent=cfg.risk_k_percent,
-		smoothing_alpha=cfg.smoothing_alpha,
-		adaptive_beta=cfg.adaptive_beta,
-	)
+    utility_results = compute_utility_metrics(
+        model=target_model,
+        tokenizer=tokenizer,
+        # These are held-out target-domain non-members.
+        texts=[x.text for x in target_nonmember_examples],
+        device=device,
+        sequence_length=cfg.sequence_length,
+        batch_size=cfg.batch_size,
+        defense=cfg.defense,
+        noise_std=cfg.noise_std,
+        risk_k_percent=cfg.risk_k_percent,
+        smoothing_alpha=cfg.smoothing_alpha,
+        adaptive_beta=cfg.adaptive_beta,
+    )
 
-	tqdm.write(
-		f"[utility] Baseline perplexity="
-		f"{utility_results['baseline_perplexity']:.6f}, "
-		f"Defended perplexity="
-		f"{utility_results['defended_perplexity']:.6f}, "
-		f"Change="
-		f"{utility_results['perplexity_change_percent']:+.2f}%, "
-		f"Top-1 agreement="
-		f"{utility_results['top1_agreement']:.6f}, "
-		f"JS divergence="
-		f"{utility_results['js_divergence']:.8f}"
-	)
+    tqdm.write(
+        f"[utility] Baseline perplexity="
+        f"{utility_results['baseline_perplexity']:.6f}, "
+        f"Defended perplexity="
+        f"{utility_results['defended_perplexity']:.6f}, "
+        f"Change="
+        f"{utility_results['perplexity_change_percent']:+.2f}%, "
+        f"Top-1 agreement="
+        f"{utility_results['top1_agreement']:.6f}, "
+        f"JS divergence="
+        f"{utility_results['js_divergence']:.8f}"
+    )
 
-		# Create results directory if it doesn't exist
-	results_dir = Path("results")
-	results_dir.mkdir(parents=True, exist_ok=True)
+    # Create results directory if it doesn't exist
+    results_dir = Path("results")
+    results_dir.mkdir(parents=True, exist_ok=True)
 
-	epoch_curve_path = (
-		results_dir
-		/ f"epoch_curve_{cfg.dataset}_{cfg.defense}_seed{cfg.seed}.csv"
-	)
+    min_k_label = f"{cfg.min_k_percent:g}"
 
-	with open(epoch_curve_path, "w", newline="") as f:
-		writer = csv.DictWriter(
-			f,
-			fieldnames=[
-				"epoch",
-				"train_loss",
-				"val_loss",
-				"ez_auc",
-				"ez_tpr_at_fpr_0.01",
-				"ez_tpr_at_fpr_0.001",
-				"ez_accuracy_at_fpr_0.001",
-				"ez_precision_at_fpr_0.001",
-				"ez_recall_at_fpr_0.001",
-				"ez_f1_at_fpr_0.001",
-				"ez_threshold_at_fpr_0.001",
-				"min_k_auc",
-				"min_k_tpr_at_fpr_0.01",
-				"min_k_tpr_at_fpr_0.001",
-				"min_k_accuracy_at_fpr_0.001",
-				"min_k_precision_at_fpr_0.001",
-				"min_k_recall_at_fpr_0.001",
-				"min_k_f1_at_fpr_0.001",
-				"min_k_threshold_at_fpr_0.001",
-			],
-		)
-		writer.writeheader()
-		writer.writerows(epoch_results)
+    epoch_curve_path = (
+        results_dir
+        / (
+            f"epoch_curve_{cfg.dataset}_{cfg.defense}_"
+            f"mink{min_k_label}_seed{cfg.seed}.csv"
+        )
+    )
 
-	tqdm.write(f"[epoch-eval] Saved epoch curve to {epoch_curve_path}")
+    with open(epoch_curve_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "epoch",
+                "train_loss",
+                "val_loss",
+                "ez_auc",
+                "ez_tpr_at_fpr_0.01",
+                "ez_tpr_at_fpr_0.001",
+                "ez_accuracy_at_fpr_0.001",
+                "ez_precision_at_fpr_0.001",
+                "ez_recall_at_fpr_0.001",
+                "ez_f1_at_fpr_0.001",
+                "ez_threshold_at_fpr_0.001",
+                "min_k_auc",
+                "min_k_tpr_at_fpr_0.01",
+                "min_k_tpr_at_fpr_0.001",
+                "min_k_accuracy_at_fpr_0.001",
+                "min_k_precision_at_fpr_0.001",
+                "min_k_recall_at_fpr_0.001",
+                "min_k_f1_at_fpr_0.001",
+                "min_k_threshold_at_fpr_0.001",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(epoch_results)
 
-	target_model.to("cpu")
-	torch.cuda.empty_cache()
+    tqdm.write(f"[epoch-eval] Saved epoch curve to {epoch_curve_path}")
 
-	if cfg.ref_variant == "distillation":
-		tqdm.write("[reference] Building reference model via distillation from target model...")
-		ref_model = build_distillation_reference(
-			tokenizer,
-			target_model,
-			distil_seed_texts if distil_seed_texts is not None else [x.text for x in domain_nonmember_examples],
-			device,
-			max_prompts=cfg.distil_max_prompts,
-			completions=cfg.distil_completions,
-			max_new_tokens=cfg.distil_max_new_tokens,
-			temperature=cfg.distil_temperature,
-			top_p=cfg.distil_top_p,
-			input_max_tokens=cfg.distil_input_max_tokens,
-			train_epochs=cfg.distil_train_epochs,
-			train_batch=cfg.distil_train_batch,
-			train_lr=cfg.distil_train_lr,
-			base_model_name=cfg.model_name,
-			use_lora_for_ref=use_lora,
-			lora_r=cfg.lora_r,
-			lora_alpha=cfg.lora_alpha,
-			lora_dropout=cfg.lora_dropout,
-			lora_target_modules=cfg.lora_target_modules,
-			val_texts=domain_val_texts,
-			sequence_length=cfg.sequence_length,
-		)
-	elif cfg.ref_variant == "sft":
-		tqdm.write("[reference] Building reference model via SFT on domain non-members...")
-		ref_model = build_sft_reference(
-			tokenizer,
-			device,
-			base_model_name=cfg.model_name,
-			texts=[x.text for x in domain_nonmember_examples],
-			epochs=cfg.sft_train_epochs,
-			batch_size=cfg.sft_train_batch,
-			lr=cfg.sft_train_lr,
-			use_lora=False,
-			lora_r=cfg.lora_r,
-			lora_alpha=cfg.lora_alpha,
-			lora_dropout=cfg.lora_dropout,
-			lora_target_modules=cfg.lora_target_modules,
-			val_texts=domain_val_texts,
-			sequence_length=cfg.sequence_length,
-		)
+    target_model.to("cpu")
+    torch.cuda.empty_cache()
 
-	ref_model.to("cpu")
-	torch.cuda.empty_cache()
+    if cfg.ref_variant == "distillation":
+        tqdm.write("[reference] Building reference model via distillation from target model...")
+        ref_model = build_distillation_reference(
+            tokenizer,
+            target_model,
+            distil_seed_texts if distil_seed_texts is not None else [x.text for x in domain_nonmember_examples],
+            device,
+            max_prompts=cfg.distil_max_prompts,
+            completions=cfg.distil_completions,
+            max_new_tokens=cfg.distil_max_new_tokens,
+            temperature=cfg.distil_temperature,
+            top_p=cfg.distil_top_p,
+            input_max_tokens=cfg.distil_input_max_tokens,
+            train_epochs=cfg.distil_train_epochs,
+            train_batch=cfg.distil_train_batch,
+            train_lr=cfg.distil_train_lr,
+            base_model_name=cfg.model_name,
+            use_lora_for_ref=use_lora,
+            lora_r=cfg.lora_r,
+            lora_alpha=cfg.lora_alpha,
+            lora_dropout=cfg.lora_dropout,
+            lora_target_modules=cfg.lora_target_modules,
+            val_texts=domain_val_texts,
+            sequence_length=cfg.sequence_length,
+        )
+    elif cfg.ref_variant == "sft":
+        tqdm.write("[reference] Building reference model via SFT on domain non-members...")
+        ref_model = build_sft_reference(
+            tokenizer,
+            device,
+            base_model_name=cfg.model_name,
+            texts=[x.text for x in domain_nonmember_examples],
+            epochs=cfg.sft_train_epochs,
+            batch_size=cfg.sft_train_batch,
+            lr=cfg.sft_train_lr,
+            use_lora=False,
+            lora_r=cfg.lora_r,
+            lora_alpha=cfg.lora_alpha,
+            lora_dropout=cfg.lora_dropout,
+            lora_target_modules=cfg.lora_target_modules,
+            val_texts=domain_val_texts,
+            sequence_length=cfg.sequence_length,
+        )
 
-	tqdm.write("[eval] Computing EZ scores from target_model + reference_model on target data...")
-	scores_m = compute_ez_scores(
-		tokenizer,
-		target_model,
-		ref_model,
-		[x.text for x in target_member_examples],
-		device,
-		sequence_length=cfg.sequence_length,
-		batch_size=cfg.batch_size,
-		defense=cfg.defense,
-		noise_std=cfg.noise_std,
-		risk_k_percent=cfg.risk_k_percent,
-		smoothing_alpha=cfg.smoothing_alpha,
-		adaptive_beta=cfg.adaptive_beta,
-	)
+    ref_model.to("cpu")
+    torch.cuda.empty_cache()
 
-	scores_nm = compute_ez_scores(
-		tokenizer,
-		target_model,
-		ref_model,
-		[x.text for x in target_nonmember_examples],
-		device,
-		sequence_length=cfg.sequence_length,
-		batch_size=cfg.batch_size,
-		defense=cfg.defense,
-		noise_std=cfg.noise_std,
-		risk_k_percent=cfg.risk_k_percent,
-		smoothing_alpha=cfg.smoothing_alpha,
-		adaptive_beta=cfg.adaptive_beta,
-	)
+    tqdm.write("[eval] Computing EZ scores from target_model + reference_model on target data...")
+    scores_m = compute_ez_scores(
+        tokenizer,
+        target_model,
+        ref_model,
+        [x.text for x in target_member_examples],
+        device,
+        sequence_length=cfg.sequence_length,
+        batch_size=cfg.batch_size,
+        defense=cfg.defense,
+        noise_std=cfg.noise_std,
+        risk_k_percent=cfg.risk_k_percent,
+        smoothing_alpha=cfg.smoothing_alpha,
+        adaptive_beta=cfg.adaptive_beta,
+    )
 
-	tqdm.write("[eval] Computing Min-K% scores from target_model on target data...")
-	min_k_scores_m = compute_min_k_scores(
-		tokenizer,
-		target_model,
-		[x.text for x in target_member_examples],
-		device,
-		sequence_length=cfg.sequence_length,
-		batch_size=cfg.batch_size,
-		defense=cfg.defense,
-		noise_std=cfg.noise_std,
-		risk_k_percent=cfg.risk_k_percent,
-		smoothing_alpha=cfg.smoothing_alpha,
-		adaptive_beta=cfg.adaptive_beta,
-	)
+    scores_nm = compute_ez_scores(
+        tokenizer,
+        target_model,
+        ref_model,
+        [x.text for x in target_nonmember_examples],
+        device,
+        sequence_length=cfg.sequence_length,
+        batch_size=cfg.batch_size,
+        defense=cfg.defense,
+        noise_std=cfg.noise_std,
+        risk_k_percent=cfg.risk_k_percent,
+        smoothing_alpha=cfg.smoothing_alpha,
+        adaptive_beta=cfg.adaptive_beta,
+    )
 
-	min_k_scores_nm = compute_min_k_scores(
-		tokenizer,
-		target_model,
-		[x.text for x in target_nonmember_examples],
-		device,
-		sequence_length=cfg.sequence_length,
-		batch_size=cfg.batch_size,
-		defense=cfg.defense,
-		noise_std=cfg.noise_std,
-		risk_k_percent=cfg.risk_k_percent,
-		smoothing_alpha=cfg.smoothing_alpha,
-		adaptive_beta=cfg.adaptive_beta,
-	)
+    tqdm.write("[eval] Computing Min-K% scores from target_model on target data...")
+    min_k_scores_m = compute_min_k_scores(
+        tokenizer,
+        target_model,
+        [x.text for x in target_member_examples],
+        device,
+        sequence_length=cfg.sequence_length,
+        batch_size=cfg.batch_size,
+        defense=cfg.defense,
+        k_percent=cfg.min_k_percent,
+        noise_std=cfg.noise_std,
+        risk_k_percent=cfg.risk_k_percent,
+        smoothing_alpha=cfg.smoothing_alpha,
+        adaptive_beta=cfg.adaptive_beta,
+    )
 
-	y_eval = np.array([1] * len(scores_m) + [0] * len(scores_nm), dtype=np.int64)
-	scores = np.array(scores_m + scores_nm, dtype=np.float32)
-	scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+    min_k_scores_nm = compute_min_k_scores(
+        tokenizer,
+        target_model,
+        [x.text for x in target_nonmember_examples],
+        device,
+        sequence_length=cfg.sequence_length,
+        batch_size=cfg.batch_size,
+        defense=cfg.defense,
+        k_percent=cfg.min_k_percent,
+        noise_std=cfg.noise_std,
+        risk_k_percent=cfg.risk_k_percent,
+        smoothing_alpha=cfg.smoothing_alpha,
+        adaptive_beta=cfg.adaptive_beta,
+    )
 
-	auc = float(roc_auc_score(y_eval, scores))
-	tpr001 = tpr_at_fpr(y_eval, scores, 0.01)
-	tpr0001 = tpr_at_fpr(y_eval, scores, 0.001)
-	ez_cls = classification_metrics_at_fpr(
-		y_eval, scores, target_fpr=0.001
-	)
+    y_eval = np.array([1] * len(scores_m) + [0] * len(scores_nm), dtype=np.int64)
+    scores = np.array(scores_m + scores_nm, dtype=np.float32)
+    scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
 
-	min_k_scores = np.array(min_k_scores_m + min_k_scores_nm, dtype=np.float32)
-	min_k_scores = np.nan_to_num(min_k_scores, nan=0.0, posinf=0.0, neginf=0.0)
+    auc = float(roc_auc_score(y_eval, scores))
+    tpr001 = tpr_at_fpr(y_eval, scores, 0.01)
+    tpr0001 = tpr_at_fpr(y_eval, scores, 0.001)
+    ez_cls = classification_metrics_at_fpr(
+        y_eval, scores, target_fpr=0.001
+    )
 
-	min_k_auc = float(roc_auc_score(y_eval, min_k_scores))
-	min_k_tpr001 = tpr_at_fpr(y_eval, min_k_scores, 0.01)
-	min_k_tpr0001 = tpr_at_fpr(y_eval, min_k_scores, 0.001)
-	min_k_cls = classification_metrics_at_fpr(
-		y_eval, min_k_scores, target_fpr=0.001
-	)
+    min_k_scores = np.array(min_k_scores_m + min_k_scores_nm, dtype=np.float32)
+    min_k_scores = np.nan_to_num(min_k_scores, nan=0.0, posinf=0.0, neginf=0.0)
 
-	tqdm.write(
-		f"[eval] Min-K% AUC={min_k_auc:.6f}, "
-		f"TPR@1%FPR={min_k_tpr001:.3f}, "
-		f"TPR@0.1%FPR={min_k_tpr0001:.3f}"
-	)
+    min_k_auc = float(roc_auc_score(y_eval, min_k_scores))
+    min_k_tpr001 = tpr_at_fpr(y_eval, min_k_scores, 0.01)
+    min_k_tpr0001 = tpr_at_fpr(y_eval, min_k_scores, 0.001)
+    min_k_cls = classification_metrics_at_fpr(
+        y_eval, min_k_scores, target_fpr=0.001
+    )
 
-	if cfg.save_artifacts_path:
-		save_artifacts(
-			save_path=cfg.save_artifacts_path,
-			target_model=target_model,
-			reference_model=ref_model,
-			tokenizer=tokenizer,
-			member_texts=[x.text for x in target_member_examples],
-			nonmember_texts=[x.text for x in target_nonmember_examples],
-			cfg=cfg,
-		)
+    tqdm.write(
+        f"[eval] Min-K% AUC={min_k_auc:.6f}, "
+        f"TPR@1%FPR={min_k_tpr001:.3f}, "
+        f"TPR@0.1%FPR={min_k_tpr0001:.3f}"
+    )
 
-	return {
-		"dataset": cfg.dataset,
-		"ref_variant": cfg.ref_variant,
-		"auc": auc,
-		"tpr_at_fpr_0.01": float(tpr001),
-		"tpr_at_fpr_0.001": float(tpr0001),
-		"accuracy_at_fpr_0.001": ez_cls["accuracy"],
-		"precision_at_fpr_0.001": ez_cls["precision"],
-		"recall_at_fpr_0.001": ez_cls["recall"],
-		"f1_at_fpr_0.001": ez_cls["f1"],
-		"threshold_at_fpr_0.001": ez_cls["threshold"],
-		"actual_fpr_at_fpr_0.001": ez_cls["actual_fpr"],
-		"seed": cfg.seed,
-		"target_model": cfg.model_name,
-		"train_total": cfg.train_total,
-		"eval_total": cfg.eval_total,
-		"epochs": cfg.epochs,
-		"save_artifacts_path": cfg.save_artifacts_path,
-		"defense": cfg.defense,
-		"noise_std": cfg.noise_std,
-		"min_k_auc": min_k_auc,
-		"min_k_tpr_at_fpr_0.01": float(min_k_tpr001),
-		"min_k_tpr_at_fpr_0.001": float(min_k_tpr0001),
-		"min_k_accuracy_at_fpr_0.001": min_k_cls["accuracy"],
-		"min_k_precision_at_fpr_0.001": min_k_cls["precision"],
-		"min_k_recall_at_fpr_0.001": min_k_cls["recall"],
-		"min_k_f1_at_fpr_0.001": min_k_cls["f1"],
-		"min_k_threshold_at_fpr_0.001": min_k_cls["threshold"],
-		"min_k_actual_fpr_at_fpr_0.001": min_k_cls["actual_fpr"],
-		"epoch_curve_path": epoch_curve_path,
-				"baseline_perplexity": utility_results[
-			"baseline_perplexity"
-		],
-		"defended_perplexity": utility_results[
-			"defended_perplexity"
-		],
-		"perplexity_change_percent": utility_results[
-			"perplexity_change_percent"
-		],
-		"top1_agreement": utility_results[
-			"top1_agreement"
-		],
-		"js_divergence": utility_results[
-			"js_divergence"
-		],
-		"utility_token_count": utility_results[
-			"utility_token_count"
-		],
-		"utility_example_count": utility_results[
-			"utility_example_count"
-		],
-	}
+    if cfg.save_artifacts_path:
+        save_artifacts(
+            save_path=cfg.save_artifacts_path,
+            target_model=target_model,
+            reference_model=ref_model,
+            tokenizer=tokenizer,
+            member_texts=[x.text for x in target_member_examples],
+            nonmember_texts=[x.text for x in target_nonmember_examples],
+            cfg=cfg,
+        )
+
+    return {
+        "dataset": cfg.dataset,
+        "ref_variant": cfg.ref_variant,
+        "min_k_percent": float(cfg.min_k_percent),
+        "auc": auc,
+        "tpr_at_fpr_0.01": float(tpr001),
+        "tpr_at_fpr_0.001": float(tpr0001),
+        "accuracy_at_fpr_0.001": ez_cls["accuracy"],
+        "precision_at_fpr_0.001": ez_cls["precision"],
+        "recall_at_fpr_0.001": ez_cls["recall"],
+        "f1_at_fpr_0.001": ez_cls["f1"],
+        "threshold_at_fpr_0.001": ez_cls["threshold"],
+        "actual_fpr_at_fpr_0.001": ez_cls["actual_fpr"],
+        "seed": cfg.seed,
+        "target_model": cfg.model_name,
+        "train_total": cfg.train_total,
+        "eval_total": cfg.eval_total,
+        "epochs": cfg.epochs,
+        "save_artifacts_path": cfg.save_artifacts_path,
+        "defense": cfg.defense,
+        "noise_std": cfg.noise_std,
+        "min_k_auc": min_k_auc,
+        "min_k_tpr_at_fpr_0.01": float(min_k_tpr001),
+        "min_k_tpr_at_fpr_0.001": float(min_k_tpr0001),
+        "min_k_accuracy_at_fpr_0.001": min_k_cls["accuracy"],
+        "min_k_precision_at_fpr_0.001": min_k_cls["precision"],
+        "min_k_recall_at_fpr_0.001": min_k_cls["recall"],
+        "min_k_f1_at_fpr_0.001": min_k_cls["f1"],
+        "min_k_threshold_at_fpr_0.001": min_k_cls["threshold"],
+        "min_k_actual_fpr_at_fpr_0.001": min_k_cls["actual_fpr"],
+        "epoch_curve_path": epoch_curve_path,
+        "baseline_perplexity": utility_results[
+            "baseline_perplexity"
+        ],
+        "defended_perplexity": utility_results[
+            "defended_perplexity"
+        ],
+        "perplexity_change_percent": utility_results[
+            "perplexity_change_percent"
+        ],
+        "top1_agreement": utility_results[
+            "top1_agreement"
+        ],
+        "js_divergence": utility_results[
+            "js_divergence"
+        ],
+        "utility_token_count": utility_results[
+            "utility_token_count"
+        ],
+        "utility_example_count": utility_results[
+            "utility_example_count"
+        ],
+    }

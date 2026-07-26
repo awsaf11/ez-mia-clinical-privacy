@@ -21,6 +21,7 @@ class AttackConfig:
     dataset: str
     ref_variant: AttackRefVariant
 
+    min_k_percent: float = 20.0
     seed: int = 42
     save_artifacts_path: str | None = None
 
@@ -72,6 +73,8 @@ class AttackConfig:
             raise ValueError(
                 "ref_variant must be one of: base, distillation, sft."
             )
+        
+
 
         if self.defense not in {
             "none",
@@ -202,6 +205,11 @@ class AttackConfig:
         if self.sft_train_lr <= 0:
             raise ValueError("sft_train_lr must be greater than zero.")
 
+        if not 0.0 < self.min_k_percent <= 100.0:
+            raise ValueError(
+                 "min_k_percent must be greater than 0 and at most 100."
+            )
+
 
 def make_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser for a single experiment."""
@@ -211,6 +219,16 @@ def make_arg_parser() -> argparse.ArgumentParser:
             "configuration file."
         )
     )
+
+    ap.add_argument(
+    "--min-k-percent",
+    type=float,
+    default=20.0,
+    help=(
+        "Percentage of lowest correct-token log probabilities "
+        "used by the Min-K% membership inference attack."
+    ),
+)
 
     ap.add_argument(
         "--config",
