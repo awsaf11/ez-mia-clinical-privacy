@@ -378,6 +378,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
             "ez_recall_at_fpr_0.001": ez_cls_epoch["recall"],
             "ez_f1_at_fpr_0.001": ez_cls_epoch["f1"],
             "ez_threshold_at_fpr_0.001": ez_cls_epoch["threshold"],
+            "ez_actual_fpr_at_fpr_0.001": ez_cls_epoch["actual_fpr"],
             "min_k_auc": min_k_auc_epoch,
             "min_k_tpr_at_fpr_0.01": float(min_k_tpr001_epoch),
             "min_k_tpr_at_fpr_0.001": float(min_k_tpr0001_epoch),
@@ -386,6 +387,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
             "min_k_recall_at_fpr_0.001": min_k_cls_epoch["recall"],
             "min_k_f1_at_fpr_0.001": min_k_cls_epoch["f1"],
             "min_k_threshold_at_fpr_0.001": min_k_cls_epoch["threshold"],
+            "min_k_actual_fpr_at_fpr_0.001": min_k_cls_epoch["actual_fpr"],
         })
 
         tqdm.write(
@@ -470,6 +472,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
                 "ez_recall_at_fpr_0.001",
                 "ez_f1_at_fpr_0.001",
                 "ez_threshold_at_fpr_0.001",
+                "ez_actual_fpr_at_fpr_0.001",
                 "min_k_auc",
                 "min_k_tpr_at_fpr_0.01",
                 "min_k_tpr_at_fpr_0.001",
@@ -478,6 +481,7 @@ def run_attack(cfg: AttackConfig) -> Dict[str, Any]:
                 "min_k_recall_at_fpr_0.001",
                 "min_k_f1_at_fpr_0.001",
                 "min_k_threshold_at_fpr_0.001",
+                "min_k_actual_fpr_at_fpr_0.001",
             ],
         )
         writer.writeheader()
