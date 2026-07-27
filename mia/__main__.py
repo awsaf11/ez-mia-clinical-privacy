@@ -24,6 +24,10 @@ def append_result_csv(row: dict):
                 "target_model",
                 "reference_variant",
                 "defense",
+                "noise_std",
+                "risk_k_percent",
+                "smoothing_alpha",
+                "adaptive_beta",
                 "attack_variant",
                 "metric",
                 "value",
@@ -35,6 +39,10 @@ def append_result_csv(row: dict):
         ref_variant = row["ref_variant"]
         seed = row["seed"]
         defense_name = row.get("defense", "none")
+        noise_std = row.get("noise_std", 0.0)
+        risk_k_percent = row.get("risk_k_percent", 20.0)
+        smoothing_alpha = row.get("smoothing_alpha", 0.0)
+        adaptive_beta = row.get("adaptive_beta", 0.0)
         min_k_percent = float(row.get("min_k_percent", 20.0))
         min_k_variant = f"min_k_{min_k_percent:g}_percent"
 
@@ -44,6 +52,10 @@ def append_result_csv(row: dict):
             target_model,
             ref_variant,
             defense_name,
+            noise_std,
+            risk_k_percent,
+            smoothing_alpha,
+            adaptive_beta,
             "ez_ratio",
             "AUC",
             f"{row['auc']:.6f}",
@@ -56,6 +68,10 @@ def append_result_csv(row: dict):
                 target_model,
                 ref_variant,
                 defense_name,
+                noise_std,
+                risk_k_percent,
+                smoothing_alpha,
+                adaptive_beta,
                 "ez_ratio",
                 "TPR@1%FPR",
                 f"{row['tpr_at_fpr_0.01']:.3f}",
@@ -67,6 +83,10 @@ def append_result_csv(row: dict):
             target_model,
             ref_variant,
             defense_name,
+            noise_std,
+            risk_k_percent,
+            smoothing_alpha,
+            adaptive_beta,
             "ez_ratio",
             "TPR@0.1%FPR",
             f"{row['tpr_at_fpr_0.001']:.3f}",
@@ -105,6 +125,10 @@ def append_result_csv(row: dict):
                 target_model,
                 ref_variant,
                 defense_name,
+                noise_std,
+                risk_k_percent,
+                smoothing_alpha,
+                adaptive_beta,
                 "ez_ratio",
                 metric_name,
                 f"{float(metric_value):.8f}",
@@ -117,6 +141,10 @@ def append_result_csv(row: dict):
             target_model,
             ref_variant,
             defense_name,
+            noise_std,
+            risk_k_percent,
+            smoothing_alpha,
+            adaptive_beta,
             min_k_variant,
             "AUC",
             f"{row['min_k_auc']:.6f}",
@@ -125,10 +153,14 @@ def append_result_csv(row: dict):
 
         if "min_k_tpr_at_fpr_0.01" in row:
             writer.writerow([
-                dataset,
-                target_model,
-                ref_variant,
-                defense_name,
+            dataset,
+            target_model,
+            ref_variant,
+            defense_name,
+            noise_std,
+            risk_k_percent,
+            smoothing_alpha,
+            adaptive_beta,
                 min_k_variant,
                 "TPR@1%FPR",
                 f"{row['min_k_tpr_at_fpr_0.01']:.3f}",
@@ -140,6 +172,10 @@ def append_result_csv(row: dict):
             target_model,
             ref_variant,
             defense_name,
+            noise_std,
+            risk_k_percent,
+            smoothing_alpha,
+            adaptive_beta,
             min_k_variant,
             "TPR@0.1%FPR",
             f"{row['min_k_tpr_at_fpr_0.001']:.3f}",
@@ -178,6 +214,10 @@ def append_result_csv(row: dict):
                 target_model,
                 ref_variant,
                 defense_name,
+                noise_std,
+                risk_k_percent,
+                smoothing_alpha,
+                adaptive_beta,
                 min_k_variant,
                 metric_name,
                 f"{float(metric_value):.8f}",
@@ -218,6 +258,10 @@ def append_result_csv(row: dict):
                 target_model,
                 ref_variant,
                 defense_name,
+                noise_std,
+                risk_k_percent,
+                smoothing_alpha,
+                adaptive_beta,
                 "utility",
                 metric_name,
                 f"{float(metric_value):.8f}",
@@ -231,6 +275,7 @@ def main():
 
     if getattr(args, "config", None):
         cfg = load_attack_config_from_yaml(args.config)
+        cfg.validate()
         res = run_attack(cfg)
 
         print(
@@ -238,6 +283,9 @@ def main():
             f"model={cfg.model_name}, "
             f"ref={cfg.ref_variant}, "
             f"defense={cfg.defense}, "
+            f"risk_k={cfg.risk_k_percent:g}, "
+            f"alpha={cfg.smoothing_alpha:g}, "
+            f"beta={cfg.adaptive_beta:g}, "
             f"Min-K={cfg.min_k_percent:g}%, "
             f"EZ-MIA AUC={res['auc']:.6f}, "
             f"EZ-MIA TPR@0.1%FPR="
